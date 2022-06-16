@@ -9,5 +9,5 @@ Mesh network based on the Arduino frame work provides a simple implementation. H
 - No setting for the type necessary
 - No router setting necessary 
 ## Question in Implementation
-- Root node shall connect to a router: Without router configuration, it could not send messgages (why?)
+- Root node shall connect to a router: Without router configuration, it can not send messgages due to implementation of the library
 - How to send a message to a specific node (e.g., the root)
