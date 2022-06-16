@@ -1,0 +1,5 @@
+{
+    "nuxt.isNuxtApp": false,
+    "idf.adapterTargetName": "esp32",
+    "idf.port": "/dev/cu.usbserial-0001"
+}
