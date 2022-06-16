@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- https://github.com/AssemblyScript/assemblyscript/tree/main/cli#api -->
+    <script
+            src="https://code.jquery.com/jquery-3.6.0.min.js"
+            integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4="
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="js/ble-module.js"></script>
+    <script type="text/javascript">
+        function compileAS() {
+            require(["https://cdn.jsdelivr.net/npm/assemblyscript@latest/dist/sdk.js"], ({asc}) => {
+                asc.ready.then(async () => {
+                    console.log("Compile AS source code...");
+                    const SOURCE_CODE = document.getElementById('code').value;
+                    //const IMPORTED_CODE = document.getElementById('imported_code').value;
+                    try {
+                        const stdout = asc.createMemoryStream();
+                        const stderr = asc.createMemoryStream();
+                        asc.main([
+                            "main.ts",
+                            "-O3",
+                            "--runtime", "stub",
+                            "--binaryFile", "main.wasm",
+                            "--textFile", "main.wat",
+                            "--sourceMap"
+                        ], {
+                            stdout,
+                            stderr,
+                            readFile(name, baseDir) {
+                                switch(name) {
+                                    case "main.ts":
+                                        return SOURCE_CODE;
+                                    case "arduino.ts":
+                                        return IMPORTED_CODE;
+                                    default:
+                                        return null;
+                                }
+                            },
+                            writeFile(name, data, baseDir) {
+                                console.log(`>>> WRITE:${name} >>>\n${data.length}`);
+                                if (name === 'main.wasm') {
+                                    const formData = new FormData();
+
+                                    const blob = new Blob([data]);
+                                    /*formData.append('file', blob, "main.wasm");
+
+                                    const options = {
+                                        method: 'POST',
+                                        body: formData,
+                                    };
+
+                                    axios.post('/upload', formData, {
+                                        headers: {
+                                            'Content-Type': 'multipart/form-data'
+                                        }
+                                    })*/
+                                    blob.arrayBuffer()
+                                        .then(arraybuf => onUpload(new Uint8Array(arraybuf)));
+                                }
+                            },
+                            listFiles(dirname, baseDir) {
+                                return [];
+                            }
+                        }, err => {
+                            console.log(`>>> STDOUT >>>\n${stdout.toString()}`);
+                            console.log(`>>> STDERR >>>\n${stderr.toString()}`);
+                            if (err) {
+                                console.log(">>> THROWN >>>");
+                                console.log(err);
+                            }
+                        });
+
+                    }
+                    catch (error){
+                        console.log('A compilation error occured:');
+                        console.log(error)
+                    }
+
+                });
+            });
+        }
+
+        /*$(document).on('click', '#update', function () {
+                $('#message').text('jQuery')
+        })*/
+    </script>
+    <style type="text/css">
+        textarea {
+            display: block;
+            width: 80%;
+            height: 500px;
+        }
+        label{
+            display: block;
+        }
+    </style>
+    <title>Retrofitting industrial machines with Wasm</title>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+<h1>Web IDE for the AS program of the edge device</h1>
+<h2>Please scan BLE-peripheral devices before uploading Wasm</h2>
+<div>
+    <button onclick="bleScan()">Scan BLE-peripheral devices</button>
+</div>
+<h2>You can code here (AssemblyScript)</h2>
+<div class="codeArea">
+    <!-- <input type="file"> -->
+    <textarea id="code">
+      export function calcWasm(x: u8, y:u8): u8 {
+        return x+y
+      }
+    </textarea>
+</div>
+<div>
+    <input type="button" value="compile and load" onclick="compileAS()">
+</div>
+<!-- If there are imported codes, put them in other textareas-->
+<!--
+<div>
+  <textarea id = "imported_code" style="display:none;">
+    // @ts-ignore: decorator
+    @external("setAxis")
+    export declare function setAxis(number:i32, value:f32): void;
+    // @ts-ignore: decorator
+    @external("showArrayRaw")
+    export declare function showArrayRaw(v1:f32,v2:f32,v3:f32,v4:f32): void;
+
+
+    // @ts-ignore: decorator
+    @external("printUTF16")
+    export declare function printUTF16(ptr: usize, len: usize): void;
+
+    export function print(str: string): void {
+        printUTF16(changetype<usize>(str), str.length);
+    }
+
+    export function println(str: string): void {
+        print(str);
+        print('\n');
+    }
+
+    // @ts-ignore: decorator
+    @external("jsonEncoder")
+    export declare function jsonEncoder(ptr: usize, len: usize, number: i32, value: f32): void;
+
+    // @ts-ignore: decorator
+    @external("setConfJson")
+    export declare function setConfJson(ptr: usize, len: usize): void;
+  </textarea>
+</div>-->
+
+</body>
+</html>
