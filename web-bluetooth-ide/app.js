@@ -1,6 +1,6 @@
 const express = require('express')
 const app = express()
-const port = 3000
+const port = process.env.PORT || 3000;//Heroku set the port dynamically not fixed!!
 const path = require('path');
 const ble =  require('./public/js/ble-module');
 const multer = require('multer');
@@ -27,7 +27,6 @@ const upload = multer({ storage:storage})
 app.listen(port, () => console.log(`Example app listening at http://localhost:${port}`))
 
 app.post('/upload', upload.single('file'), function (req, res) {
-    //TODO: send data via BLE!!
     console.log('Received a POST request')
     console.log(req.file)
 })
