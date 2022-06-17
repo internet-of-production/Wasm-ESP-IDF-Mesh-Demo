@@ -10,7 +10,8 @@
 * Run the gatt_client demo, the client demo will automatically connect to the gatt_server demo.
 * Client demo will enable gatt_server's notify after connection. The two devices will then exchange
 * data.
-*
+* Reading the turorial is recommended.
+* https://github.com/espressif/esp-idf/blob/master/examples/bluetooth/bluedroid/ble/gatt_server/tutorial/Gatt_Server_Example_Walkthrough.md
 ****************************************************************************/
 
 
@@ -33,6 +34,8 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
 static uint8_t char1_str[] = {0x11,0x22,0x33};
 static esp_gatt_char_prop_t a_property = 0;
+int wasm_packet_number = 0;
+int wasm_current_transmit_offset = 0;
 
 static esp_attr_value_t gatts_demo_char1_val =
 {
@@ -206,6 +209,8 @@ void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     }
 }
 
+
+//This function responses for a write requiest if a client requires a response (need_rsp).
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
     esp_gatt_status_t status = ESP_GATT_OK;
     if (param->write.need_rsp){
@@ -355,6 +360,39 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                     esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
                 }
 
+            }
+            else {
+                if(param->write.value[0] == 0x01){
+                    wasm_packet_number = (param->write.value[1]) << 8 | param->write.value[2];
+                    int result = remove("/spiffs/main.wasm");
+                    if(result){
+                        ESP_LOGE(GATTS_TAG, "Failed to remove wasm file ");
+                    }
+                }
+                else if(param->write.value[0] == 0x02){
+                    if(!wasm_packet_number){
+                        ESP_LOGE(GATTS_TAG, "Missing the initial packet for uploading wasm");
+                        return;
+                    }
+                    wasm_current_transmit_offset = (param->write.value[1]) << 8 | param->write.value[2];
+                    FILE* wasmFile = fopen("/spiffs/main.wasm", "ab");//Open with append mode
+                    if (wasmFile == NULL) {
+                        ESP_LOGE(GATTS_TAG, "Failed to open file for reading");
+                        return;
+                    }
+                    size_t written_length = fwrite(param->write.value+3, 1, param->write.len-3, wasmFile);
+                    fclose(wasmFile);
+                    if(!written_length){
+                        ESP_LOGE(GATTS_TAG, "Failed to write wasm binary");
+                        return;
+                    }
+                    if(wasm_current_transmit_offset+1 == wasm_packet_number){
+                        esp_restart();
+                    }
+                }
+                else {
+                    ESP_LOGI(GATTS_TAG, "Unknown package flag for updating Wasm");
+                }
             }
         }
         example_write_event_env(gatts_if, &a_prepare_write_env, param);

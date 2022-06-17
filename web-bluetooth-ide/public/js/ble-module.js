@@ -98,7 +98,7 @@ function onUpload(wasmArray){
                 for(let i=0; i<numberOfPackets; i++) {
                     //Fit size of the last packet
                     if(i+1 == numberOfPackets){
-                        let bufferLast = new ArrayBuffer(wasmArray.length % mtu)
+                        let bufferLast = new ArrayBuffer((wasmArray.length % mtu) + 3)
                         byteNextArray = new Uint8Array(bufferLast)
                     }
                     byteNextArray[0] = 0x02
@@ -107,7 +107,7 @@ function onUpload(wasmArray){
 
                     len = byteNextArray.length
                     for (let j = 3; j < len; j++) {
-                        byteNextArray[j] = wasmArray[i * (len - 3) + j]
+                        byteNextArray[j] = wasmArray[i * (len - 3) + j - 3] //TODO: One can make here more simple
                     }
                     console.log('byteNextArray')
                     console.log(byteNextArray.length)
