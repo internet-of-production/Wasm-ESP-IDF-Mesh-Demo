@@ -20,11 +20,13 @@
 #include "m3_env.h"
 #include "wasm3_defs.h"
 
+//#define SET_AS_ROOT
+
 #define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
 #define TX_SIZE          (1460) //MTU of outgoing packets. 
 #define CONFIG_MESH_ROUTE_TABLE_SIZE 10 //There is a limit??
 #define CONFIG_MESH_AP_CONNECTIONS 5 //MAX 10
-#define CONFIG_MESH_CHANNEL 6 /* channel (must match the router's channel) */
+#define CONFIG_MESH_CHANNEL 0 /* channel (must match the router's channel) */
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
 #define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
 #define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
@@ -181,8 +183,11 @@ void esp_mesh_p2p_tx_main(void *arg)
             ESP_LOGI(MESH_TAG, "size:%d/%d,send_count:%d", route_table_size,
                      esp_mesh_get_routing_table_size(), send_count);
         }
-
-        const char* message = "Hello! I am node222.";
+    #ifdef SET_AS_ROOT
+        const char* message = "Hello! I am the root node.";
+    #else
+        const char* message = "Hello! I am an internal node01.";
+    #endif
         int len = strlen(message);
         for(int j=0; j<len; j++){
             tx_buf[j] = (uint8_t)message[j];
@@ -220,10 +225,8 @@ void esp_mesh_p2p_tx_main(void *arg)
 
 void esp_mesh_p2p_rx_main(void *arg)
 {
-    int recv_count = 0;
     esp_err_t err;
     mesh_addr_t from;
-    int send_count = 0;
     mesh_data_t data;
     int flag = 0;
     data.data = rx_buf;
@@ -496,6 +499,9 @@ void app_main() {
     /*  event initialization */
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
+    /*  create network interfaces for mesh (only station instance saved for further manipulation, soft AP instance ignored */
+    ESP_ERROR_CHECK(esp_netif_create_default_wifi_mesh_netifs(&netif_sta, NULL));
+
     /*  Wi-Fi initialization */
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&config));
@@ -503,6 +509,7 @@ void app_main() {
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &ip_event_handler, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
     ESP_ERROR_CHECK(esp_wifi_start());
+
 
     /*  mesh initialization */
     ESP_ERROR_CHECK(esp_mesh_init());
@@ -516,17 +523,22 @@ void app_main() {
     /* channel (must match the router's channel) */
     cfg.channel = CONFIG_MESH_CHANNEL;
     /* router */
+    
     cfg.router.ssid_len = strlen(CONFIG_MESH_ROUTER_SSID);
     memcpy((uint8_t *) &cfg.router.ssid, CONFIG_MESH_ROUTER_SSID, cfg.router.ssid_len);
     memcpy((uint8_t *) &cfg.router.password, CONFIG_MESH_ROUTER_PASSWD,
     strlen(CONFIG_MESH_ROUTER_PASSWD));
 
+
     /*Is root node fix?*/
     ESP_ERROR_CHECK(esp_mesh_fix_root(true));
     /*node type.*/
-    //esp_mesh_set_type(MESH_ROOT);
+    #ifdef SET_AS_ROOT
+        esp_mesh_set_type(MESH_ROOT);
+    #endif
 
     /* mesh softAP */
+    ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(WIFI_AUTH_OPEN));
     cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
     memcpy((uint8_t *) &cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWD,
         strlen(CONFIG_MESH_AP_PASSWD));
@@ -534,7 +546,12 @@ void app_main() {
 
     /* mesh start */
     ESP_ERROR_CHECK(esp_mesh_start());
+    
+    ESP_LOGI(MESH_TAG, "mesh starts successfully, heap:%d, %s<%d>%s, ps:%d\n",  esp_get_minimum_free_heap_size(),
+             esp_mesh_is_root_fixed() ? "root fixed" : "root not fixed",
+             esp_mesh_get_topology(), esp_mesh_get_topology() ? "(chain)":"(tree)", esp_mesh_is_ps_enabled());
 
+    //******BLE*******
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
