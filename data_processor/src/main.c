@@ -11,6 +11,7 @@
 #include "esp_mesh_internal.h"
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
+#include "mesh_msg_codes.h"
 
 //BLE
 #include "ble-wasm.h"
@@ -30,9 +31,12 @@
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
 #define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
 #define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
+#define MESH_NODE_NAME "data_processor"
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
+//base MAC address must be unicast MAC (least significant bit of first byte must be zero)
+uint8_t new_mac[8] = {0x00,0x01,0x02,0x03,0x04,0x05};
 
 static bool is_mesh_connected = false;
 static bool is_running = true;
@@ -186,33 +190,21 @@ void esp_mesh_p2p_tx_main(void *arg)
     #ifdef SET_AS_ROOT
         const char* message = "Hello! I am the root node.";
     #else
-        const char* message = "Hello! I am an internal node01.";
+        //const char* message = "Hello! I am an internal node01.";
     #endif
-        int len = strlen(message);
+        /*int len = strlen(message);
         for(int j=0; j<len; j++){
             tx_buf[j] = (uint8_t)message[j];
-        } 
+        }*/
+        tx_buf[0] = GET_ROUTING_TABLE;
         //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
-        for (i = 0; i < route_table_size; i++) {
-            err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
-            if (err) {
-                ESP_LOGE(MESH_TAG,
-                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
-                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
-                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
-                         err, data.proto, data.tos);
-            } 
-        }
 
         //Send to the root node. //TODO: mesh_addr_t is a struct type. How to specify the root node?? See event_root_adr in esp_mesh.h
         //mesh_addr_t rootMACAddress = {{0x01, 0x01, 0x01, 0x01, 0x01, 0x01}};
         err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
             if (err) {
-                ESP_LOGE(MESH_TAG,
-                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
-                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
-                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
-                         err, data.proto, data.tos);
+                ESP_LOGE(MESH_TAG, "Error occured at sending message");
+            
             } 
 
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
@@ -227,21 +219,74 @@ void esp_mesh_p2p_rx_main(void *arg)
 {
     esp_err_t err;
     mesh_addr_t from;
-    mesh_data_t data;
+    mesh_data_t rx_data;
+    mesh_data_t tx_data;
+    mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
+    int route_table_size = 0;
+    int send_count = 0;
+    //reception
     int flag = 0;
-    data.data = rx_buf;
-    data.size = RX_SIZE;
+    rx_data.data = rx_buf;
+    rx_data.size = RX_SIZE;
+    //transimission
+    tx_data.data = tx_buf;
+    tx_data.size = sizeof(tx_buf);
+    tx_data.proto = MESH_PROTO_BIN;
+    tx_data.tos = MESH_TOS_P2P;
+
     is_running = true;
 
     while (is_running) {
-        data.size = RX_SIZE;
-        err = esp_mesh_recv(&from, &data, portMAX_DELAY, &flag, NULL, 0);
-        if (err != ESP_OK || !data.size) {
-            ESP_LOGE(MESH_TAG, "err:0x%x, size:%d", err, data.size);
+        rx_data.size = RX_SIZE;
+        err = esp_mesh_recv(&from, &rx_data, portMAX_DELAY, &flag, NULL, 0);
+        if (err != ESP_OK || !rx_data.size) {
+            ESP_LOGE(MESH_TAG, "err:0x%x, size:%d", err, rx_data.size);
             continue;
         }
 
-        ESP_LOGI(MESH_TAG, "Received message: %s", (char*)data.data);
+        switch (rx_data.data[0])
+        {
+        case INFORM_NODE_TXT_MSG:
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
+            break;
+        case GET_ROUTING_TABLE:
+            //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
+            esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+                                   CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
+            //| MSG Code | table length | MAC addresses | name length | name string |
+            tx_buf[0] = (uint8_t)INFORM_ROUTING_TABLE;
+            tx_buf[1] = (uint8_t)route_table_size; //TODO:check this casting 
+            for(int j=0; j<route_table_size; j++){
+                for(int i=0;i<6;i++){
+                    tx_buf[j*6+i+2] = route_table[j].addr[i];
+                }
+            }
+            int len = strlen(MESH_NODE_NAME);
+            tx_buf[route_table_size*6+2] = (uint8_t)len;
+            for(int k=0; k<len; k++){
+                rx_buf[route_table_size*6 + 2 + k] = (uint8_t)MESH_NODE_NAME[k];
+            }
+            //Response
+            err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(from.addr), esp_get_minimum_free_heap_size(),
+                         err, tx_data.proto, tx_data.tos);
+            }
+            break;
+        case INFORM_ROUTING_TABLE: //| MSG Code | table length | MAC addresses | name length | name string |
+            ESP_LOGI(MESH_TAG, "Length: %d", rx_data.data[1]);
+            for(int i=0; i<rx_data.data[1]*6; i++){
+                ESP_LOGI(MESH_TAG, "MAC: %d", rx_data.data[i+2]);
+            }
+            
+            break;
+        default:
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
+            break;
+        }
         
     }
     vTaskDelete(NULL);
@@ -466,6 +511,8 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 void app_main() {
+    ESP_LOGI(TAG, "set MAC address");
+    esp_base_mac_addr_set(new_mac);
 
     //Initialize spiffs
     ESP_LOGI(TAG, "Initializing SPIFFS");
