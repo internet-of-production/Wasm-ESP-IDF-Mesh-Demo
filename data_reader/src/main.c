@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_mesh.h"
 #include "esp_mesh_internal.h"
+#include "mesh_msg_codes.h"
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
 
@@ -18,14 +19,15 @@
 #include "ble-wasm.h"
 #endif
 
-//wasm3
 //#define USE_WASM
+
 #ifdef USE_WASM
+//wasm3
 #include "wasm3.h"
 #include "m3_env.h"
 #include "wasm3_defs.h"
-#endif
 
+#endif
 
 #define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
 #define TX_SIZE          (1460) //MTU of outgoing packets. 
@@ -35,11 +37,12 @@
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
 #define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
 #define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
+#define MESH_NODE_NAME "data reader"
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
-//base MAC address must be unicast MAC (least significant bit of first byte must be zero)
-uint8_t new_mac[8] = {0x00,0x01,0x02,0x03,0x04,0x06};
+//Broadcast group
+static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 
 static bool is_mesh_connected = false;
 static bool is_running = true;
@@ -136,6 +139,7 @@ static void run_wasm()
 
 }
 #endif
+
   /**
  * @fn 
  * Call WASM task
@@ -188,21 +192,21 @@ void esp_mesh_p2p_tx_main(void *arg)
 
     while (is_running) {
         //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
-        esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+        /*esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
                                    CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
         if (send_count && !(send_count % 100)) {
             ESP_LOGI(MESH_TAG, "size:%d/%d,send_count:%d", route_table_size,
                      esp_mesh_get_routing_table_size(), send_count);
         }
     
-        const char* message = "Hello! I am an internal node02.";
-
+        const char* message = "Hello! I am the root node.";
+    
         int len = strlen(message);
         for(int j=0; j<len; j++){
             tx_buf[j] = (uint8_t)message[j];
-        } 
+        }*/
         //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
-        for (i = 0; i < route_table_size; i++) {
+        /*for (i = 0; i < route_table_size; i++) {
             err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
             if (err) {
                 ESP_LOGE(MESH_TAG,
@@ -211,18 +215,8 @@ void esp_mesh_p2p_tx_main(void *arg)
                          MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
                          err, data.proto, data.tos);
             } 
-        }
+        }*/
 
-        //Send to the root node. //TODO: mesh_addr_t is a struct type. How to specify the root node?? See event_root_adr in esp_mesh.h
-        //mesh_addr_t rootMACAddress = {{0x01, 0x01, 0x01, 0x01, 0x01, 0x01}};
-        err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
-            if (err) {
-                ESP_LOGE(MESH_TAG,
-                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
-                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
-                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
-                         err, data.proto, data.tos);
-            } 
 
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
         if (route_table_size < 10) {
@@ -236,21 +230,81 @@ void esp_mesh_p2p_rx_main(void *arg)
 {
     esp_err_t err;
     mesh_addr_t from;
-    mesh_data_t data;
+    mesh_data_t rx_data;
+    mesh_data_t tx_data;
+    mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
+    int route_table_size = 0;
+    int send_count = 0;
+    //reception
     int flag = 0;
-    data.data = rx_buf;
-    data.size = RX_SIZE;
+    rx_data.data = rx_buf;
+    rx_data.size = RX_SIZE;
+    //transimission
+    tx_data.data = tx_buf;
+    tx_data.size = sizeof(tx_buf);
+    tx_data.proto = MESH_PROTO_BIN;
+    tx_data.tos = MESH_TOS_P2P;
+
     is_running = true;
 
     while (is_running) {
-        data.size = RX_SIZE;
-        err = esp_mesh_recv(&from, &data, portMAX_DELAY, &flag, NULL, 0);
-        if (err != ESP_OK || !data.size) {
-            ESP_LOGE(MESH_TAG, "err:0x%x, size:%d", err, data.size);
+        rx_data.size = RX_SIZE;
+        err = esp_mesh_recv(&from, &rx_data, portMAX_DELAY, &flag, NULL, 0);
+        if (err != ESP_OK || !rx_data.size) {
+            ESP_LOGE(MESH_TAG, "err:0x%x, size:%d", err, rx_data.size);
             continue;
         }
 
-        ESP_LOGI(MESH_TAG, "Received message: %s", (char*)data.data);
+        switch (rx_data.data[0])
+        {
+        case INFORM_NODE_TXT_MSG:
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
+            break;
+        case GET_ROUTING_TABLE:
+            //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
+            esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+                                   CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
+            //| MSG Code | table length | MAC addresses | name length | name string |
+            tx_buf[0] = (uint8_t)INFORM_ROUTING_TABLE;
+            tx_buf[1] = (uint8_t)esp_mesh_get_routing_table_size(); //TODO:check this casting 
+            ESP_LOGI(MESH_TAG, "Stored routing table size: %d", tx_buf[1]);
+            for(int j=0; j<route_table_size; j++){
+                for(int i=0;i<6;i++){
+                    tx_buf[j*6+i+2] = route_table[j].addr[i];
+                }
+            }
+            int name_len = strlen(MESH_NODE_NAME);
+            tx_buf[route_table_size*6+2] = (uint8_t)name_len;
+            for(int k=0; k<name_len; k++){
+                tx_buf[route_table_size*6 + 2 + k] = (uint8_t)MESH_NODE_NAME[k];
+            }
+            //has Wasm?
+            #ifdef HAS_WASM_MODULE
+            tx_buf[2 + route_table_size*6 + name_len] = 0x01;
+            #else
+            tx_buf[2 + route_table_size*6 + name_len] = 0x00;
+            #endif
+            //Response
+            err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
+            ESP_LOGI(MESH_TAG, "Send to "MACSTR, MAC2STR(from.addr));
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(from.addr), esp_get_minimum_free_heap_size(),
+                         err, tx_data.proto, tx_data.tos);
+            }
+            break;
+        case INFORM_ROUTING_TABLE:
+            //| MSG Code | table length | MAC addresses | name length | name string |
+            //TODO: Send via BLE. Why are messages with INFORM_ROUTING... incomming after response above??
+            ESP_LOGI(MESH_TAG, "CODE: %d", rx_data.data[0]);
+            ESP_LOGI(MESH_TAG, "MAC: %s", (char*)rx_data.data+1);
+            break;
+        default:
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
+            break;
+        }
         
     }
     vTaskDelete(NULL);
@@ -475,8 +529,6 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 void app_main() {
-    ESP_LOGI(TAG, "set MAC address");
-    esp_base_mac_addr_set(new_mac);
 
     //Initialize spiffs
     ESP_LOGI(TAG, "Initializing SPIFFS");
@@ -544,6 +596,9 @@ void app_main() {
     /*Is root node fix?*/
     ESP_ERROR_CHECK(esp_mesh_fix_root(true));
 
+    //set group id
+    ESP_ERROR_CHECK(esp_mesh_set_group_id(&broadcast_group_id, 1));
+
     /* mesh softAP */
     ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(WIFI_AUTH_OPEN));
     cfg.mesh_ap.max_connection = CONFIG_MESH_AP_CONNECTIONS;
@@ -607,11 +662,11 @@ void app_main() {
     #endif
 
     #ifdef USE_WASM
-    ESP_LOGI(TAG, "Loading wasm");
-    run_wasm(NULL);
+        ESP_LOGI(TAG, "Loading wasm");
+        run_wasm(NULL);
 
-    wasm_task();
-    ESP_LOGI(TAG, "Wasm result:");
-    ESP_LOGI(TAG,"%d", wasmResult);
+        wasm_task();
+        ESP_LOGI(TAG, "Wasm result:");
+        ESP_LOGI(TAG,"%d", wasmResult);
     #endif
 }

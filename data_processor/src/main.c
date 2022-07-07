@@ -21,7 +21,6 @@
 #include "m3_env.h"
 #include "wasm3_defs.h"
 
-//#define SET_AS_ROOT
 
 #define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
 #define TX_SIZE          (1460) //MTU of outgoing packets. 
@@ -35,6 +34,8 @@
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
+//Broadcast group
+static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 //base MAC address must be unicast MAC (least significant bit of first byte must be zero)
 uint8_t new_mac[8] = {0x00,0x01,0x02,0x03,0x04,0x05};
 
@@ -49,6 +50,7 @@ static uint8_t rx_buf[RX_SIZE] = { 0, }; //Buffer for incoming
 static const char *MESH_TAG = "mesh_main";
 static const char *TAG = "wasm";
 
+#define HAS_WASM_MODULE
 #define WASM_STACK_SLOTS    4000
 #define CALC_INPUT  2
 #define FATAL(func, msg) { ESP_LOGE(TAG, "Fatal: " func " "); ESP_LOGE(TAG, "%s", msg);}
@@ -187,21 +189,15 @@ void esp_mesh_p2p_tx_main(void *arg)
             ESP_LOGI(MESH_TAG, "size:%d/%d,send_count:%d", route_table_size,
                      esp_mesh_get_routing_table_size(), send_count);
         }
-    #ifdef SET_AS_ROOT
-        const char* message = "Hello! I am the root node.";
-    #else
-        //const char* message = "Hello! I am an internal node01.";
-    #endif
+    
         /*int len = strlen(message);
         for(int j=0; j<len; j++){
             tx_buf[j] = (uint8_t)message[j];
         }*/
         tx_buf[0] = GET_ROUTING_TABLE;
-        //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
-
-        //Send to the root node. //TODO: mesh_addr_t is a struct type. How to specify the root node?? See event_root_adr in esp_mesh.h
-        //mesh_addr_t rootMACAddress = {{0x01, 0x01, 0x01, 0x01, 0x01, 0x01}};
-        err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
+        
+        //TODO: use MESH_DATA_GROUP and set group_ID with esp_mesh_set_group_id to do broadcasting
+        err = esp_mesh_send(&broadcast_group_id, &data, MESH_DATA_GROUP, NULL, 0);
             if (err) {
                 ESP_LOGE(MESH_TAG, "Error occured at sending message");
             
@@ -253,19 +249,25 @@ void esp_mesh_p2p_rx_main(void *arg)
             //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
             esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
                                    CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
-            //| MSG Code | table length | MAC addresses | name length | name string |
+            //| MSG Code | table length | MAC addresses | name length | name string | has wasm (yes=0x01, no=0x00)|
             tx_buf[0] = (uint8_t)INFORM_ROUTING_TABLE;
-            tx_buf[1] = (uint8_t)route_table_size; //TODO:check this casting 
+            tx_buf[1] = (uint8_t)esp_mesh_get_routing_table_size(); //TODO:check this casting 
             for(int j=0; j<route_table_size; j++){
                 for(int i=0;i<6;i++){
                     tx_buf[j*6+i+2] = route_table[j].addr[i];
                 }
             }
-            int len = strlen(MESH_NODE_NAME);
-            tx_buf[route_table_size*6+2] = (uint8_t)len;
-            for(int k=0; k<len; k++){
-                rx_buf[route_table_size*6 + 2 + k] = (uint8_t)MESH_NODE_NAME[k];
+            int name_len = strlen(MESH_NODE_NAME);
+            tx_buf[route_table_size*6+2] = (uint8_t)name_len;
+            for(int k=0; k<name_len; k++){
+                tx_buf[route_table_size*6 + 2 + k] = (uint8_t)MESH_NODE_NAME[k];
             }
+            //has Wasm?
+            #ifdef HAS_WASM_MODULE
+            tx_buf[2 + route_table_size*6 + name_len] = 0x01;
+            #else
+            tx_buf[2 + route_table_size*6 + name_len] = 0x00;
+            #endif
             //Response
             err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
             if (err) {
@@ -276,7 +278,7 @@ void esp_mesh_p2p_rx_main(void *arg)
                          err, tx_data.proto, tx_data.tos);
             }
             break;
-        case INFORM_ROUTING_TABLE: //| MSG Code | table length | MAC addresses | name length | name string |
+        case INFORM_ROUTING_TABLE: //| MSG Code | table length | MAC addresses | name length | name string | has wasm (yes=0x01, no=0x00)|
             ESP_LOGI(MESH_TAG, "Length: %d", rx_data.data[1]);
             for(int i=0; i<rx_data.data[1]*6; i++){
                 ESP_LOGI(MESH_TAG, "MAC: %d", rx_data.data[i+2]);
@@ -579,10 +581,9 @@ void app_main() {
 
     /*Is root node fix?*/
     ESP_ERROR_CHECK(esp_mesh_fix_root(true));
-    /*node type.*/
-    #ifdef SET_AS_ROOT
-        esp_mesh_set_type(MESH_ROOT);
-    #endif
+
+    //set group id
+    ESP_ERROR_CHECK(esp_mesh_set_group_id(&broadcast_group_id, 1));
 
     /* mesh softAP */
     ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(WIFI_AUTH_OPEN));

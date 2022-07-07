@@ -41,6 +41,8 @@
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
+//Broadcast group
+static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 
 static bool is_mesh_connected = false;
 static bool is_running = true;
@@ -271,11 +273,17 @@ void esp_mesh_p2p_rx_main(void *arg)
                     tx_buf[j*6+i+2] = route_table[j].addr[i];
                 }
             }
-            int len = strlen(MESH_NODE_NAME);
-            tx_buf[route_table_size*6+2] = (uint8_t)len;
-            for(int k=0; k<len; k++){
+            int name_len = strlen(MESH_NODE_NAME);
+            tx_buf[route_table_size*6+2] = (uint8_t)name_len;
+            for(int k=0; k<name_len; k++){
                 tx_buf[route_table_size*6 + 2 + k] = (uint8_t)MESH_NODE_NAME[k];
             }
+            //has Wasm?
+            #ifdef HAS_WASM_MODULE
+            tx_buf[2 + route_table_size*6 + name_len] = 0x01;
+            #else
+            tx_buf[2 + route_table_size*6 + name_len] = 0x00;
+            #endif
             //Response
             err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
             ESP_LOGI(MESH_TAG, "Send to "MACSTR, MAC2STR(from.addr));
@@ -591,6 +599,8 @@ void app_main() {
     
     esp_mesh_set_type(MESH_ROOT);
 
+    //set group id
+    ESP_ERROR_CHECK(esp_mesh_set_group_id(&broadcast_group_id, 1));
 
     /* mesh softAP */
     ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(WIFI_AUTH_OPEN));
