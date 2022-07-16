@@ -1093,21 +1093,22 @@ void esp_mesh_p2p_rx_main(void *arg)
 
             num_received_ds_table++; 
             ds_ble_array[0] = num_received_ds_table;
-            ds_ble_array[ds_ble_array_offset] = rx_data.data[1];
+            ds_ble_array[ds_ble_array_offset] = rx_data.data[1] + 1;//including the owner of the table
+            ds_ble_array_offset += 1;
 
-            for(int j=0; j<rx_data.data[1]*6; j++){
-                ds_ble_array[ds_ble_array_offset + 1 + j] = rx_data.data[j+1];
+            for(int i=0; i<6; i++){
+                ds_ble_array[ds_ble_array_offset + i] = from.addr[i];
             }
 
-            ds_ble_array_offset = ds_ble_array_offset + 1 + rx_data.data[1]*6; //TODO: check this offset
+            ds_ble_array_offset += 6;
+
+            for(int j=0; j<rx_data.data[1]*6; j++){
+                ds_ble_array[ds_ble_array_offset + j] = rx_data.data[j+1];
+            }
+
+            ds_ble_array_offset = ds_ble_array_offset + rx_data.data[1]*6; //TODO: check this offset
             
-            //TODO: check rx_data.data size.
-            /*err = esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
-                gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].char_handle, sizeof(ble_array), ble_array, false);
-                ESP_LOGI(MESH_TAG, "The table data size: %d", sizeof(ble_array));
-                if(err){
-                    ESP_LOGE(GATTS_TAG, "Notification failed!! CODE: %d", err);
-                }*/
+            
             ESP_LOGI(MESH_TAG, "num_received_ds_table: %d", num_received_ds_table);
             ESP_LOGI(MESH_TAG, "snapshot_total_nodes %d", snapshot_total_nodes);
             if(num_received_ds_table == snapshot_total_nodes){
