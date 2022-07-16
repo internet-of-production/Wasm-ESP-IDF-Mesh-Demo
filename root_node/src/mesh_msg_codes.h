@@ -5,6 +5,7 @@
 
 //Requests to the root node 0x0--
 #define GET_ROUTING_TABLE 0x00
+#define GET_DATA_STREAM_TABLE 0x01
 
 //Requests to nodes 0x2--
 #define GET_NODE_NAME_AND_MAC_ADD 0x20
@@ -13,7 +14,9 @@
 #define INFORM_NODE_NAME 0xE0
 #define INFORM_NODE_TXT_MSG 0xE1 
 #define INFORM_CPU_LOAD 0xE2
-#define INFORM_ROUTING_TABLE 0xE3 //| MSG Code | table length | MAC address | name length | name string |
+#define INFORM_ROUTING_TABLE 0xE3 //| MSG Code | table length | MAC address | name length | name string | has wasm (yes=0x01, no=0x00)|
+#define INFORM_DATA_STREAM_TABLE 0xE4 //| MSG Code | total number of nodes | table length | MAC addresses |
+#define INFORM_TOTAL_NUMBER_OF_NODES 0xE5 // | MSG Code | total number of nodes | Root node informs all other nodes
 
 //Transmitting read/sensored data 0xA--
 #define Machine_DATA 0xA0

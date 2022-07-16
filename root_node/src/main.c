@@ -1,4 +1,5 @@
 //ESP-WIFI-MESH-DOCUMENTATION https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp-wifi-mesh.html
+//manual setting mac address by esp_base_mac_addr_set(new_mac) causes unexpected behaivior. (children do not receive message from the root)
 
 // Include FreeRTOS for delay
 #include <freertos/FreeRTOS.h>
@@ -15,9 +16,7 @@
 
 //BLE
 //#define USE_BLE
-#ifdef USE_BLE
 #include "ble-wasm.h"
-#endif
 
 //#define USE_WASM
 
@@ -38,11 +37,14 @@
 #define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
 #define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
 #define MESH_NODE_NAME "Root node"
+#define MESH_DATA_STREAM_TABLE_LEN 2*6 // there is two receiver
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
 //Broadcast group
 static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
+//base MAC address must be unicast MAC (least significant bit of first byte must be zero)
+//uint8_t new_mac[6] = {0x00,0x00,0x00,0x00,0xFF,0x00};
 
 static bool is_mesh_connected = false;
 static bool is_running = true;
@@ -51,6 +53,9 @@ static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
 static uint8_t tx_buf[TX_SIZE] = { 0, }; //Buffer for outgoing
 static uint8_t rx_buf[RX_SIZE] = { 0, }; //Buffer for incoming
+
+static mesh_addr_t data_stream_table[MESH_DATA_STREAM_TABLE_LEN]; //TODO: every node must have a routing table of data.
+uint8_t num_of_destination = 0;
 
 static const char *MESH_TAG = "mesh_main";
 static const char *TAG = "wasm";
@@ -176,6 +181,37 @@ static void run_wasm()
   }
 #endif
 
+/************************************************************************
+ * Management of data stream table in the mesh network
+ ************************************************************************/
+
+void set_default_destination(){
+    num_of_destination = 1;
+    for(int j=0; j<6;j++){
+        //data_stream_table[0].addr[j] = root_mac[j];
+    }    
+}
+
+//TODO: implement!
+void add_to_data_stream_table(uint8_t* add_addr){
+    if(num_of_destination == MESH_DATA_STREAM_TABLE_LEN){
+        ESP_LOGE(MESH_TAG, "MAX number of data destination is %d\n", MESH_DATA_STREAM_TABLE_LEN);
+    }
+    else{
+        num_of_destination++;
+    }
+}
+//TODO: implement!
+void remove_from_data_stream_table(uint8_t* rm_addr){
+    if(num_of_destination == 0){
+        ESP_LOGE(MESH_TAG, "The data stream table is empty\n");
+    }
+    else{
+        //Search the given rm_addr and remove.
+        //num_of_destination--;
+    }
+}
+
 void esp_mesh_p2p_tx_main(void *arg)
 {
     int i;
@@ -192,7 +228,7 @@ void esp_mesh_p2p_tx_main(void *arg)
 
     while (is_running) {
         //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
-        /*esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+        esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
                                    CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
         if (send_count && !(send_count % 100)) {
             ESP_LOGI(MESH_TAG, "size:%d/%d,send_count:%d", route_table_size,
@@ -204,9 +240,9 @@ void esp_mesh_p2p_tx_main(void *arg)
         int len = strlen(message);
         for(int j=0; j<len; j++){
             tx_buf[j] = (uint8_t)message[j];
-        }*/
+        }
         //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
-        /*for (i = 0; i < route_table_size; i++) {
+        for (i = 0; i < route_table_size; i++) {
             err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
             if (err) {
                 ESP_LOGE(MESH_TAG,
@@ -215,12 +251,12 @@ void esp_mesh_p2p_tx_main(void *arg)
                          MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
                          err, data.proto, data.tos);
             } 
-        }*/
+        }
 
 
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
         if (route_table_size < 10) {
-            vTaskDelay(1 * 1000 / portTICK_PERIOD_MS);
+            vTaskDelay(1 * 3000 / portTICK_PERIOD_MS);
         }
     }
     vTaskDelete(NULL);
@@ -244,6 +280,10 @@ void esp_mesh_p2p_rx_main(void *arg)
     tx_data.size = sizeof(tx_buf);
     tx_data.proto = MESH_PROTO_BIN;
     tx_data.tos = MESH_TOS_P2P;
+
+    uint8_t ds_ble_array[BLE_LOCAL_MTU]; //For data stream diagram
+    uint8_t ds_ble_array_offset = 1;
+    uint8_t num_received_ds_table = 0;
 
     is_running = true;
 
@@ -301,6 +341,31 @@ void esp_mesh_p2p_rx_main(void *arg)
             ESP_LOGI(MESH_TAG, "CODE: %d", rx_data.data[0]);
             ESP_LOGI(MESH_TAG, "MAC: %s", (char*)rx_data.data+1);
             break;
+        case GET_DATA_STREAM_TABLE: //| MSG Code |
+            tx_buf[0] = (uint8_t)INFORM_DATA_STREAM_TABLE;
+            tx_buf[1] = num_of_destination;
+
+            if(num_of_destination != 0){
+                for(int j=0; j<num_of_destination; j++){
+                    for(int i=0;i<6;i++){
+                        tx_buf[j*6+i+2] = route_table[j].addr[i];
+                    }
+                }
+            }
+
+            err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(from.addr), esp_get_minimum_free_heap_size(),
+                         err, tx_data.proto, tx_data.tos);
+            }
+
+            break;
+        case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
+            //TODO: add code if needed
+            break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
             break;
@@ -308,6 +373,55 @@ void esp_mesh_p2p_rx_main(void *arg)
         
     }
     vTaskDelete(NULL);
+}
+
+/**
+* Broadcast current number of participants
+*/
+void inform_ds_table_len(){
+    esp_err_t err;
+    int send_count = 0;
+    mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
+    int route_table_size = 0;
+    mesh_data_t data;
+    data.data = tx_buf;
+    data.size = sizeof(tx_buf);
+    data.proto = MESH_PROTO_BIN;
+    data.tos = MESH_TOS_P2P;
+    
+
+    //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
+    esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+                                CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
+    if (send_count && !(send_count % 100)) {
+        ESP_LOGI(MESH_TAG, "size:%d/%d,send_count:%d", route_table_size,
+                    esp_mesh_get_routing_table_size(), send_count);
+    }
+
+    tx_buf[0] = INFORM_TOTAL_NUMBER_OF_NODES;
+    tx_buf[1] = route_table_size;
+
+    ESP_LOGI(MESH_TAG, "Inform current total number of participants");
+    ESP_LOGI(MESH_TAG, "route table size: %d", route_table_size);
+
+    for(int j=0; j < route_table_size; j++){
+        ESP_LOGI(MESH_TAG, "MAC Addr %d:", j);
+        for(int i=0; i<6; i++){
+            ESP_LOGI(MESH_TAG, "%d", route_table[j].addr[i]);
+        }
+    }
+
+    //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
+    for (int i = 0; i < route_table_size; i++) {
+        err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
+        if (err) {
+            ESP_LOGE(MESH_TAG,
+                        "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                        send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                        MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                        err, data.proto, data.tos);
+        } 
+    }
 }
 
 esp_err_t esp_mesh_comm_p2p_start(void)
@@ -370,6 +484,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGW(MESH_TAG, "<MESH_EVENT_ROUTING_TABLE_ADD>add %d, new:%d, layer:%d",
                  routing_table->rt_size_change,
                  routing_table->rt_size_new, mesh_layer);
+        inform_ds_table_len();
     }
     break;
     case MESH_EVENT_ROUTING_TABLE_REMOVE: {
@@ -377,6 +492,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGW(MESH_TAG, "<MESH_EVENT_ROUTING_TABLE_REMOVE>remove %d, new:%d, layer:%d",
                  routing_table->rt_size_change,
                  routing_table->rt_size_new, mesh_layer);
+        inform_ds_table_len();
     }
     break;
     case MESH_EVENT_NO_PARENT_FOUND: {

@@ -37,13 +37,14 @@
 #define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
 #define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
 #define MESH_NODE_NAME "data_processor"
+#define MESH_DATA_STREAM_TABLE_LEN 2*6 // there is two receiver
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
 //Broadcast group
 static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 //base MAC address must be unicast MAC (least significant bit of first byte must be zero)
-uint8_t new_mac[8] = {0x00,0x01,0x02,0x03,0x04,0x05};
+uint8_t new_mac[6] = {0x00,0x00,0x00,0x00,0xFF,0x01};
 
 static bool is_mesh_connected = false;
 static bool is_running = true;
@@ -52,6 +53,18 @@ static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
 static uint8_t tx_buf[TX_SIZE] = { 0, }; //Buffer for outgoing
 static uint8_t rx_buf[RX_SIZE] = { 0, }; //Buffer for incoming
+static mesh_addr_t data_stream_table[MESH_DATA_STREAM_TABLE_LEN]; //TODO: every node must have a routing table of data.
+uint8_t num_of_destination = 0;
+uint8_t current_total_nodes = 0;
+uint8_t snapshot_total_nodes = 0;
+uint32_t data_stream_table_trans_id;
+uint8_t current_root_mac[6];
+uint8_t default_dest_mac[6];
+
+uint8_t ble_array[BLE_ROUTE_TABLE_MTU]; //For table size, name size, and wasmflag. 
+uint8_t ds_ble_array[BLE_LOCAL_MTU]; //For data stream diagram
+uint8_t ds_ble_array_offset = 1;
+uint8_t num_received_ds_table = 0;
 
 static const char *MESH_TAG = "mesh_main";
 static const char *TAG = "wasm";
@@ -173,6 +186,40 @@ static void run_wasm()
 
   }
 
+/************************************************************************
+ * Management of data stream table in the mesh network
+ ************************************************************************/
+
+void set_default_destination(){
+    num_of_destination = 1;
+    for(int j=0; j<6;j++){
+        data_stream_table[0].addr[j] = default_dest_mac[j];
+    }    
+}
+
+//TODO: implement! This function assumes that free space are in the tail position 
+void add_to_data_stream_table(uint8_t* add_addr){
+    if(num_of_destination == MESH_DATA_STREAM_TABLE_LEN){
+        ESP_LOGE(MESH_TAG, "MAX number of data destination is %d\n", MESH_DATA_STREAM_TABLE_LEN);
+    }
+    else{
+        for(int j=0; j<6;j++){
+            data_stream_table[num_of_destination].addr[j] = default_dest_mac[j];
+        } 
+        num_of_destination++;
+    }
+}
+//TODO: implement!
+void remove_from_data_stream_table(uint8_t* rm_addr){
+    if(num_of_destination == 0){
+        ESP_LOGE(MESH_TAG, "The data stream table is empty\n");
+    }
+    else{
+        //Search the given rm_addr and remove.
+        //To make free the tail space, shift remaining addresses
+        //num_of_destination--;
+    }
+}
 /******************
  * BLE
  ******************/
@@ -684,8 +731,10 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
 
-        //TODO: broadcast mesh message
-        tx_buf[0] = GET_ROUTING_TABLE;
+        snapshot_total_nodes = current_total_nodes;
+        //TODO: What happens if this event is called twice in very short time?
+
+        tx_buf[0] = GET_DATA_STREAM_TABLE;
         
         //broadcasting in the mesh network 
         err = esp_mesh_send(&broadcast_group_id, &data, MESH_DATA_GROUP, NULL, 0);
@@ -694,11 +743,8 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
             
             }
 
-        rsp.attr_value.len = 1;
-        rsp.attr_value.value[0] = 0x01;//Just inform that requesting routing tables is received successfully
-        
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                    ESP_GATT_OK, &rsp);
+        data_stream_table_trans_id = param->read.trans_id;
+
         break;
     }
     case ESP_GATTS_WRITE_EVT: {
@@ -721,8 +767,11 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
                         {
                             notify_data[i] = i%0xff;
                         }
+
+                        vTaskDelay(1 * 2000 / portTICK_PERIOD_MS);
                         esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].char_handle,
                                                 sizeof(notify_data), notify_data, true);
+                        vTaskDelay(1 * 2000 / portTICK_PERIOD_MS);
 
                         //broadcasting in the mesh network
                         err = esp_mesh_send(&broadcast_group_id, &data, MESH_DATA_GROUP, NULL, 0);
@@ -878,9 +927,9 @@ void esp_mesh_p2p_tx_main(void *arg)
     data.tos = MESH_TOS_P2P;
     is_running = true;
 
-    //while (is_running) {
+    while (is_running) {
         //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
-        /*esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+        esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
                                    CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
         if (send_count && !(send_count % 100)) {
             ESP_LOGI(MESH_TAG, "size:%d/%d,send_count:%d", route_table_size,
@@ -892,22 +941,29 @@ void esp_mesh_p2p_tx_main(void *arg)
         tx_buf[0] = INFORM_NODE_TXT_MSG;
         for(int j=1; j<len+1; j++){
             tx_buf[j] = (uint8_t)message[j];
-        }*/
+        }
         
         //Send message to the root node
-        //err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
-        //broadcast
-        /*err = esp_mesh_send(&broadcast_group_id, &data, MESH_DATA_GROUP, NULL, 0);
+        /*err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
             if (err) {
-                ESP_LOGE(MESH_TAG, "Error occured at sending message");
-            
-            } */
+                ESP_LOGE(MESH_TAG,"ERROR at sending txt message");
+            }*/ 
+        for (int i = 0; i < num_of_destination; i++) {
+            err = esp_mesh_send(&data_stream_table[i], &data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                         err, data.proto, data.tos);
+            } 
+        }
 
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
-        /*if (route_table_size < 10) {
-            vTaskDelay(1 * 1000 / portTICK_PERIOD_MS);
-        }*/
-    //}
+        if (route_table_size < 10) {
+            vTaskDelay(1 * 3000 / portTICK_PERIOD_MS);
+        }
+    }
     vTaskDelete(NULL);
 }
 
@@ -929,8 +985,8 @@ void esp_mesh_p2p_rx_main(void *arg)
     tx_data.size = sizeof(tx_buf);
     tx_data.proto = MESH_PROTO_BIN;
     tx_data.tos = MESH_TOS_P2P;
+    esp_gatt_rsp_t rsp;
 
-    uint8_t ble_array[BLE_ROUTE_TABLE_MTU]; //For table size, name size, and wasmflag. 
     is_running = true;
 
     while (is_running) {
@@ -944,7 +1000,7 @@ void esp_mesh_p2p_rx_main(void *arg)
         switch (rx_data.data[0])
         {
         case INFORM_NODE_TXT_MSG:
-            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
             break;
         case GET_ROUTING_TABLE:
             //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
@@ -981,7 +1037,7 @@ void esp_mesh_p2p_rx_main(void *arg)
             break;
         case INFORM_ROUTING_TABLE: //| MSG Code | table length | MAC addresses | name length | name string | has wasm (yes=0x01, no=0x00)|
         //TODO: forward to WebIDE via BLE
-            ESP_LOGI(MESH_TAG, "Length: %d", rx_data.data[1]);
+            ESP_LOGI(MESH_TAG, "Length (INFORM_ROUTING_TABLE): %d", rx_data.data[1]);
             for(int i=0; i<rx_data.data[1]*6; i++){
                 ESP_LOGI(MESH_TAG, "MAC: %d", rx_data.data[i+2]);
             }
@@ -991,14 +1047,87 @@ void esp_mesh_p2p_rx_main(void *arg)
             }
             
             //TODO: check rx_data.data size.
-
-            esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
-                err = gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].char_handle, sizeof(ble_array), ble_array, false);
+            err = esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
+                gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].char_handle, sizeof(ble_array), ble_array, false);
                 ESP_LOGI(MESH_TAG, "The table data size: %d", sizeof(ble_array));
                 if(err){
                     ESP_LOGE(GATTS_TAG, "Notification failed!! CODE: %d", err);
                 }
             
+            break;
+        case GET_DATA_STREAM_TABLE: //| MSG Code |
+            tx_buf[0] = (uint8_t)INFORM_DATA_STREAM_TABLE;
+            tx_buf[1] = num_of_destination;
+
+            if(num_of_destination != 0){
+                for(int j=0; j<num_of_destination; j++){
+                    for(int i=0;i<6;i++){
+                        tx_buf[j*6+i+2] = route_table[j].addr[i];
+                    }
+                }
+            }
+
+            err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(from.addr), esp_get_minimum_free_heap_size(),
+                         err, tx_data.proto, tx_data.tos);
+            }
+
+            break;
+        case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
+        //TODO: forward to WebIDE via BLE
+            ESP_LOGI(MESH_TAG, "Length (INFORM_DATA_STREAM_TABLE): %d", rx_data.data[1]);
+            for(int i=0; i<rx_data.data[1]*6; i++){
+                ESP_LOGI(MESH_TAG, "MAC: %d", rx_data.data[i+2]);
+            }
+            
+            if(ds_ble_array_offset + rx_data.data[1]*6 + 1 > BLE_LOCAL_MTU){
+                ESP_LOGE(MESH_TAG, "Data stream table size is too large!!");
+                ds_ble_array_offset = 0;
+                num_received_ds_table = 0;
+                break;
+            }
+
+            num_received_ds_table++; 
+            ds_ble_array[0] = num_received_ds_table;
+            ds_ble_array[ds_ble_array_offset] = rx_data.data[1];
+
+            for(int j=0; j<rx_data.data[1]*6; j++){
+                ds_ble_array[ds_ble_array_offset + 1 + j] = rx_data.data[j+1];
+            }
+
+            ds_ble_array_offset = ds_ble_array_offset + 1 + rx_data.data[1]*6; //TODO: check this offset
+            
+            //TODO: check rx_data.data size.
+            /*err = esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
+                gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].char_handle, sizeof(ble_array), ble_array, false);
+                ESP_LOGI(MESH_TAG, "The table data size: %d", sizeof(ble_array));
+                if(err){
+                    ESP_LOGE(GATTS_TAG, "Notification failed!! CODE: %d", err);
+                }*/
+            ESP_LOGI(MESH_TAG, "num_received_ds_table: %d", num_received_ds_table);
+            ESP_LOGI(MESH_TAG, "snapshot_total_nodes %d", snapshot_total_nodes);
+            if(num_received_ds_table == snapshot_total_nodes){
+                rsp.attr_value.len = ds_ble_array_offset;
+                for(int j=0;j<ds_ble_array_offset;j++){
+                    rsp.attr_value.value[j] = ds_ble_array[j];
+                }
+
+                ESP_LOGI(GATTS_TAG, "Send stream table via BLE");
+                esp_ble_gatts_send_response(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
+                                        data_stream_table_trans_id, ESP_GATT_OK, &rsp);
+
+                ds_ble_array_offset = 0;
+                num_received_ds_table = 0;
+            }
+            
+            break;
+        case INFORM_TOTAL_NUMBER_OF_NODES:
+            current_total_nodes = rx_data.data[1];
+            ESP_LOGI(MESH_TAG, "%d nodes are participating in this mesh network", current_total_nodes);
             break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
@@ -1101,6 +1230,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
             esp_netif_dhcpc_stop(netif_sta);
             esp_netif_dhcpc_start(netif_sta);
         }
+        add_to_data_stream_table(current_root_mac);//TODO: this implementation is just for experimental purpose. Remove if you know which MAC should initially be used. 
         esp_mesh_comm_p2p_start();
     }
     break;
@@ -1127,6 +1257,11 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
         mesh_event_root_address_t *root_addr = (mesh_event_root_address_t *)event_data;
         ESP_LOGI(MESH_TAG, "<MESH_EVENT_ROOT_ADDRESS>root address:"MACSTR"",
                  MAC2STR(root_addr->addr));
+
+        for(int i=0; i<6; i++){
+            current_root_mac[i] = root_addr->addr[i];
+        }
+        
     }
     break;
     case MESH_EVENT_VOTE_STARTED: {
@@ -1230,6 +1365,8 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
 void app_main() {
     ESP_LOGI(TAG, "set MAC address");
     esp_base_mac_addr_set(new_mac);
+
+    //set_default_destination();
 
     //Initialize spiffs
     ESP_LOGI(TAG, "Initializing SPIFFS");
