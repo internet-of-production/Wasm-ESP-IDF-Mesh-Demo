@@ -59,7 +59,7 @@ uint8_t current_total_nodes = 0;
 uint8_t snapshot_total_nodes = 0;
 uint32_t data_stream_table_trans_id;
 uint8_t current_root_mac[6];
-uint8_t default_dest_mac[6];
+uint8_t default_dest_mac[6] = {0xEC,0x94,0xCB,0x6F,0xBD,0xB0};//root
 
 uint8_t ble_array[BLE_ROUTE_TABLE_MTU]; //For table size, name size, and wasmflag. 
 uint8_t ds_ble_array[BLE_LOCAL_MTU]; //For data stream diagram
@@ -197,14 +197,14 @@ void set_default_destination(){
     }    
 }
 
-//TODO: implement! This function assumes that free space are in the tail position 
+//TODO: This function assumes that free space are in the tail position 
 void add_to_data_stream_table(uint8_t* add_addr){
     if(num_of_destination == MESH_DATA_STREAM_TABLE_LEN){
         ESP_LOGE(MESH_TAG, "MAX number of data destination is %d\n", MESH_DATA_STREAM_TABLE_LEN);
     }
     else{
         for(int j=0; j<6;j++){
-            data_stream_table[num_of_destination].addr[j] = default_dest_mac[j];
+            data_stream_table[num_of_destination].addr[j] = add_addr[j];
         } 
         num_of_destination++;
     }
@@ -1062,7 +1062,7 @@ void esp_mesh_p2p_rx_main(void *arg)
             if(num_of_destination != 0){
                 for(int j=0; j<num_of_destination; j++){
                     for(int i=0;i<6;i++){
-                        tx_buf[j*6+i+2] = route_table[j].addr[i];
+                        tx_buf[j*6+i+2] = data_stream_table[j].addr[i];
                     }
                 }
             }
@@ -1086,7 +1086,7 @@ void esp_mesh_p2p_rx_main(void *arg)
             
             if(ds_ble_array_offset + rx_data.data[1]*6 + 1 > BLE_LOCAL_MTU){
                 ESP_LOGE(MESH_TAG, "Data stream table size is too large!!");
-                ds_ble_array_offset = 0;
+                ds_ble_array_offset = 1;
                 num_received_ds_table = 0;
                 break;
             }
@@ -1103,7 +1103,7 @@ void esp_mesh_p2p_rx_main(void *arg)
             ds_ble_array_offset += 6;
 
             for(int j=0; j<rx_data.data[1]*6; j++){
-                ds_ble_array[ds_ble_array_offset + j] = rx_data.data[j+1];
+                ds_ble_array[ds_ble_array_offset + j] = rx_data.data[j+2];
             }
 
             ds_ble_array_offset = ds_ble_array_offset + rx_data.data[1]*6; //TODO: check this offset
@@ -1121,7 +1121,7 @@ void esp_mesh_p2p_rx_main(void *arg)
                 esp_ble_gatts_send_response(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
                                         data_stream_table_trans_id, ESP_GATT_OK, &rsp);
 
-                ds_ble_array_offset = 0;
+                ds_ble_array_offset = 1;
                 num_received_ds_table = 0;
             }
             
@@ -1129,6 +1129,7 @@ void esp_mesh_p2p_rx_main(void *arg)
         case INFORM_TOTAL_NUMBER_OF_NODES:
             current_total_nodes = rx_data.data[1];
             ESP_LOGI(MESH_TAG, "%d nodes are participating in this mesh network", current_total_nodes);
+            //add_to_data_stream_table(current_root_mac);//TODO: this implementation is just for experimental purpose. Remove if you know which MAC should initially be used. 
             break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
@@ -1231,7 +1232,7 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
             esp_netif_dhcpc_stop(netif_sta);
             esp_netif_dhcpc_start(netif_sta);
         }
-        add_to_data_stream_table(current_root_mac);//TODO: this implementation is just for experimental purpose. Remove if you know which MAC should initially be used. 
+    
         esp_mesh_comm_p2p_start();
     }
     break;
@@ -1367,7 +1368,7 @@ void app_main() {
     ESP_LOGI(TAG, "set MAC address");
     esp_base_mac_addr_set(new_mac);
 
-    //set_default_destination();
+    set_default_destination();
 
     //Initialize spiffs
     ESP_LOGI(TAG, "Initializing SPIFFS");
