@@ -20,3 +20,7 @@
 
 //Transmitting read/sensored data 0xA--
 #define Machine_DATA 0xA0
+
+//Wasm Update
+#define SEND_WASM_INIT 0xB0 
+#define SEND_WASM 0xB1
