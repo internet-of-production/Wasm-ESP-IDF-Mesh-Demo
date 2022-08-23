@@ -269,6 +269,7 @@ void esp_mesh_p2p_rx_main(void *arg)
     mesh_data_t rx_data;
     mesh_data_t tx_data;
     mesh_addr_t route_table[CONFIG_MESH_ROUTE_TABLE_SIZE];
+    mesh_addr_t inform_ds_table_dest;
     int route_table_size = 0;
     int send_count = 0;
     //reception
@@ -353,7 +354,10 @@ void esp_mesh_p2p_rx_main(void *arg)
                 }
             }
 
-            err = esp_mesh_send(&from, &tx_data, MESH_DATA_P2P, NULL, 0);
+            for(int i=0; i<6; i++){
+                inform_ds_table_dest.addr[i] = rx_data.data[i+1];
+            }
+            err = esp_mesh_send(&inform_ds_table_dest, &tx_data, MESH_DATA_P2P, NULL, 0);
             if (err) {
                 ESP_LOGE(MESH_TAG,
                          "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
@@ -362,6 +366,26 @@ void esp_mesh_p2p_rx_main(void *arg)
                          err, tx_data.proto, tx_data.tos);
             }
 
+            break;
+        case GET_DATA_STREAM_TABLE_ROOT:
+            esp_mesh_get_routing_table((mesh_addr_t *) &route_table,
+                                   CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
+
+            tx_buf[0] = GET_DATA_STREAM_TABLE;
+            for(int j=0; j<6; j++){
+                tx_buf[j+1] = from.addr[j];
+            }
+            //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
+            for (int i = 0; i < route_table_size; i++) {
+                err = esp_mesh_send(&route_table[i], &tx_data, MESH_DATA_P2P, NULL, 0);
+                if (err) {
+                    ESP_LOGE(MESH_TAG,
+                            "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                            send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                            MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                            err, tx_data.proto, tx_data.tos);
+                } 
+            }
             break;
         case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
             //TODO: add code if needed

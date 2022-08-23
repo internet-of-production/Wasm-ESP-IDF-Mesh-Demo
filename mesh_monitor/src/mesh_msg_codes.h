@@ -6,6 +6,7 @@
 //Requests to the root node 0x0--
 #define GET_ROUTING_TABLE 0x00
 #define GET_DATA_STREAM_TABLE 0x01
+#define GET_DATA_STREAM_TABLE_ROOT 0x02
 
 //Requests to nodes 0x2--
 #define GET_NODE_NAME_AND_MAC_ADD 0x20
