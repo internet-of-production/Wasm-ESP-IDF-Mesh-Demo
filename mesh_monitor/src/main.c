@@ -674,15 +674,22 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
 
-        rsp.attr_value.len = ds_ble_array_offset;
+        
+        snapshot_total_nodes = current_total_nodes;
+        //TODO: What happens if this event is called twice in very short time?
 
-        for(int j=0;j<ds_ble_array_offset;j++){
-            rsp.attr_value.value[j] = ds_ble_array[j];
-        }
+        ds_ble_array_offset = 1;//reset ble_array_offset
+        num_received_ds_table = 0; //reset received data stream tables of nodes in the mesh network
 
-        ESP_LOGI(GATTS_TAG, "Send stream table via BLE");
-        esp_ble_gatts_send_response(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
-                                param->read.trans_id, ESP_GATT_OK, &rsp);
+        tx_buf[0] = GET_DATA_STREAM_TABLE_ROOT;//Request root node to broadcast the get_data_stream_table message
+            //err = esp_mesh_send(&broadcast_group_id, &tx_data, MESH_DATA_GROUP, NULL, 0);
+            err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
+            
+            if (err) {
+                ESP_LOGE(MESH_TAG, "Error occured at sending message: GET_DATA_STREAM_TABLE: %x", err);
+            }
+        
+        data_stream_table_trans_id = param->read.trans_id;
 
         break;
     }
@@ -1040,23 +1047,24 @@ void esp_mesh_p2p_rx_main(void *arg)
             
             ESP_LOGI(MESH_TAG, "num_received_ds_table: %d", num_received_ds_table);
             ESP_LOGI(MESH_TAG, "snapshot_total_nodes %d", snapshot_total_nodes);
+            if(num_received_ds_table == snapshot_total_nodes){
+                rsp.attr_value.len = ds_ble_array_offset;
+                for(int j=0;j<ds_ble_array_offset;j++){
+                    rsp.attr_value.value[j] = ds_ble_array[j];
+                }
+
+                ESP_LOGI(GATTS_TAG, "Send stream table via BLE");
+                esp_ble_gatts_send_response(gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].gatts_if, gl_profile_tab[PROFILE_MESH_GRAPH_APP_ID].conn_id, 
+                                        data_stream_table_trans_id, ESP_GATT_OK, &rsp);
+
+                ds_ble_array_offset = 1;
+                num_received_ds_table = 0;
+            }
             
             break;
         case INFORM_TOTAL_NUMBER_OF_NODES:
             current_total_nodes = rx_data.data[1];
             ESP_LOGI(MESH_TAG, "%d nodes are participating in this mesh network", current_total_nodes);
-            snapshot_total_nodes = current_total_nodes;
-            ds_ble_array_offset = 1;//reset ble_array_offset
-            num_received_ds_table = 0; //reset received data stream tables of nodes in the mesh network
-
-            tx_buf[0] = GET_DATA_STREAM_TABLE_ROOT;
-            //err = esp_mesh_send(&broadcast_group_id, &tx_data, MESH_DATA_GROUP, NULL, 0);
-            err = esp_mesh_send(NULL, &tx_data, MESH_DATA_P2P, NULL, 0);
-            
-            if (err) {
-                ESP_LOGE(MESH_TAG, "Error occured at sending message: GET_DATA_STREAM_TABLE");
-            }
-
             break;
         case SEND_WASM_INIT:
             //Receive wasm init msg. | MSG_CODE| #packet (upperbyte) | #packet (lower byte)|
