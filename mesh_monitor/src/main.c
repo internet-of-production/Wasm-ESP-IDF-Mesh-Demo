@@ -23,9 +23,9 @@
 #include "ble-wasm.h"
 
 //wasm3
-#include "wasm3.h"
+/*#include "wasm3.h"
 #include "m3_env.h"
-#include "wasm3_defs.h"
+#include "wasm3_defs.h"*/
 
 
 #define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
@@ -78,116 +78,6 @@ static const char *TAG = "wasm";
 #define FATAL(func, msg) { ESP_LOGE(TAG, "Fatal: " func " "); ESP_LOGE(TAG, "%s", msg);}
 #define BASE_PATH "/spiffs"
 
-IM3Environment env;
-IM3Runtime runtime;
-IM3Module module;
-IM3Function calcWasm;
-int wasmResult = 0;
-
-/**
- * @fn 
- * WASM setup using wasm3
- */
-static void run_wasm()
-{
-    // load wasm from SPIFFS
-    /* If default CONFIG_ARDUINO_LOOP_STACK_SIZE 8192 < wasmFile,
-    a new size must be given in  \Users\<user>\.platformio\packages\framework-arduinoespressif32\tools\sdk\include\config\sdkconfig.h
-    https://community.platformio.org/t/esp32-stack-configuration-reloaded/20994/2
-    */
-    FILE* wasmFile = fopen("/spiffs/main.wasm", "rb");
-    if (wasmFile == NULL) {
-        ESP_LOGE(TAG, "Failed to open file for reading");
-        return;
-    }
-
-    //get file status
-    struct stat sb;
-    if (stat("/spiffs/main.wasm", &sb) == -1) {
-        perror("stat");
-        exit(EXIT_FAILURE);
-    }
-
-    // read file
-    unsigned int build_main_wasm_len = sb.st_size;
-    unsigned char build_main_wasm[build_main_wasm_len];
-    fread(build_main_wasm, 1, sb.st_size, wasmFile);
-    fclose(wasmFile);
-
-    ESP_LOGI(TAG, "wasm_length:");
-    ESP_LOGI(TAG, "%d", build_main_wasm_len);
-
-    ESP_LOGI(TAG, "Loading WebAssembly was successful");
-    //ESP_LOGI(TAG, "Wasm Version ID: ");
-    //ESP_LOGI(TAG, getWasmVersionId());
-
-    M3Result result = m3Err_none;
-
-    //it warks also without using variable
-    //uint8_t* wasm = (uint8_t*)build_app_wasm;
-
-    env = m3_NewEnvironment ();
-    if (!env) {/*setWasmInvalidFlag();*/ FATAL("NewEnvironment", "failed"); esp_restart();}
-
-    runtime = m3_NewRuntime (env, WASM_STACK_SLOTS, NULL);
-    if (!runtime) {/*setWasmInvalidFlag();*/ FATAL("m3_NewRuntime", "failed"); esp_restart();}
-
-    #ifdef WASM_MEMORY_LIMIT
-    runtime->memoryLimit = WASM_MEMORY_LIMIT;
-    #endif
-
-    result = m3_ParseModule (env, &module, build_main_wasm, build_main_wasm_len);
-    if (result) {/*setWasmInvalidFlag();*/ FATAL("m3_ParseModule", result); esp_restart();}
-
-    result = m3_LoadModule (runtime, module);
-    if (result) {/*setWasmInvalidFlag();*/ FATAL("m3_LoadModule", result); esp_restart();}
-
-    // link
-    //result = LinkArduino (runtime);
-    //if (result) FATAL("LinkArduino", result);
-
-
-    result = m3_FindFunction (&calcWasm, runtime, "calcWasm");
-    if (result) {/*setWasmInvalidFlag();*/ FATAL("m3_FindFunction(calcWasm)", result); esp_restart();}
-
-    ESP_LOGI(TAG, "Running WebAssembly...");
-
-}
-
-  /**
- * @fn 
- * Call WASM task
- */
-
-  void wasm_task(){
-    const void *i_argptrs[CALC_INPUT];
-    char inputBytes[CALC_INPUT] = {0x01, 0x02};
-    M3Result result = m3Err_none;
-    
-    for(int i=0; i<CALC_INPUT ;i++){
-      i_argptrs[i] = &inputBytes[i];
-    }
-
-    /*
-    m3_Call(function, number_of_arguments, arguments_array)
-    To get return, one have to call a function with m3_Call first, then call m3_GetResultsV(function, adress).
-    (Apparently) m3_Call stores the result in the liner memory, then m3_GetResultsV accesses the address.
-    */
-    result = m3_Call(calcWasm,CALC_INPUT,i_argptrs);                       
-    if(result){
-      //setWasmInvalidFlag();
-      FATAL("m3_Call(calcWasm):", result);
-      esp_restart();
-    }
-
-    result = m3_GetResultsV(calcWasm, &wasmResult);
-    if(result){
-      //setWasmInvalidFlag();
-      FATAL("m3_GetResultsV(calcWasm):", result);
-      esp_restart();
-    }
-
-  }
 
 /************************************************************************
  * Management of data stream table in the mesh network
@@ -990,22 +880,6 @@ void esp_mesh_p2p_tx_main(void *arg)
         for(int j=1; j<len+1; j++){
             tx_buf[j] = (uint8_t)message[j];
         }
-        
-        //Send message to the root node
-        /*err = esp_mesh_send(NULL, &data, MESH_DATA_P2P, NULL, 0);
-            if (err) {
-                ESP_LOGE(MESH_TAG,"ERROR at sending txt message");
-            }
-        for (int i = 0; i < num_of_destination; i++) {
-            err = esp_mesh_send(&data_stream_table[i], &data, MESH_DATA_P2P, NULL, 0);
-            if (err) {
-                ESP_LOGE(MESH_TAG,
-                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
-                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
-                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
-                         err, data.proto, data.tos);
-            } 
-        }*/
 
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
         if (route_table_size < 10) {
@@ -1592,10 +1466,4 @@ void app_main() {
         ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
 
-    /*ESP_LOGI(TAG, "Loading wasm");
-    run_wasm(NULL);
-
-    wasm_task();
-    ESP_LOGI(TAG, "Wasm result:");
-    ESP_LOGI(TAG,"%d", wasmResult);*/
 }
