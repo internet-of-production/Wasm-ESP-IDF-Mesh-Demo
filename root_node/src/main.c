@@ -342,14 +342,19 @@ void esp_mesh_p2p_rx_main(void *arg)
             ESP_LOGI(MESH_TAG, "CODE: %d", rx_data.data[0]);
             ESP_LOGI(MESH_TAG, "MAC: %s", (char*)rx_data.data+1);
             break;
-        case GET_DATA_STREAM_TABLE: //| MSG Code |
-            tx_buf[0] = (uint8_t)INFORM_DATA_STREAM_TABLE;
-            tx_buf[1] = num_of_destination;
+        case GET_DATA_STREAM_TABLE: //| MSG Code | MAC addresse of the client |
+            tx_buf[0] = INFORM_DATA_STREAM_TABLE;
+            #ifdef USE_WASM
+            tx_buf[1] = 1; //WASM flag. Information of Wasm availability
+            #else
+            tx_buf[1] = 0;
+            #endif
+            tx_buf[2] = num_of_destination;
 
             if(num_of_destination != 0){
                 for(int j=0; j<num_of_destination; j++){
                     for(int i=0;i<6;i++){
-                        tx_buf[j*6+i+2] = route_table[j].addr[i];
+                        tx_buf[j*6+i+3] = route_table[j].addr[i];
                     }
                 }
             }

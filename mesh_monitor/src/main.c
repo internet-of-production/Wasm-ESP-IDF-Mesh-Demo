@@ -985,15 +985,20 @@ void esp_mesh_p2p_rx_main(void *arg)
                 }
             
             break;
-        case GET_DATA_STREAM_TABLE: //| MSG Code |
+        case GET_DATA_STREAM_TABLE: //| MSG Code | MAC addresse of the client |
             ESP_LOGI(MESH_TAG, "A Mesh-Message arrived: GET_DATA_STREAM_TABLE");
-            tx_buf[0] = (uint8_t)INFORM_DATA_STREAM_TABLE;
-            tx_buf[1] = num_of_destination;
+            tx_buf[0] = INFORM_DATA_STREAM_TABLE;
+            #ifdef USE_WASM
+            tx_buf[1] = 1; //WASM flag. Information of Wasm availability
+            #else
+            tx_buf[1] = 0;
+            #endif
+            tx_buf[2] = num_of_destination;
 
             if(num_of_destination != 0){
                 for(int j=0; j<num_of_destination; j++){
                     for(int i=0;i<6;i++){
-                        tx_buf[j*6+i+2] = data_stream_table[j].addr[i];
+                        tx_buf[j*6+i+3] = data_stream_table[j].addr[i];
                     }
                 }
             }
@@ -1013,14 +1018,14 @@ void esp_mesh_p2p_rx_main(void *arg)
             ESP_LOGI(MESH_TAG, "Send a Mesh-Message was successful: answer of GET_DATA_STREAM_TABLE");
 
             break;
-        case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
+        case INFORM_DATA_STREAM_TABLE: //| MSG Code | Wasm flag (Does the sender node has Wasm module?) | table length | MAC addresses |
         //TODO: forward to WebIDE via BLE
-            ESP_LOGI(MESH_TAG, "Length (INFORM_DATA_STREAM_TABLE): %d", rx_data.data[1]);
-            for(int i=0; i<rx_data.data[1]*6; i++){
-                ESP_LOGI(MESH_TAG, "MAC: %d", rx_data.data[i+2]);
+            ESP_LOGI(MESH_TAG, "Length (INFORM_DATA_STREAM_TABLE): %d", rx_data.data[2]);
+            for(int i=0; i<rx_data.data[2]*6; i++){
+                ESP_LOGI(MESH_TAG, "MAC: %d", rx_data.data[i+3]);
             }
             
-            if(ds_ble_array_offset + rx_data.data[1]*6 + 1 > BLE_LOCAL_MTU){
+            if(ds_ble_array_offset + rx_data.data[2]*6 + 1 > BLE_LOCAL_MTU){
                 ESP_LOGE(MESH_TAG, "Data stream table size is too large!!");
                 ds_ble_array_offset = 1;
                 num_received_ds_table = 0;
@@ -1029,7 +1034,9 @@ void esp_mesh_p2p_rx_main(void *arg)
 
             num_received_ds_table++; 
             ds_ble_array[0] = num_received_ds_table;
-            ds_ble_array[ds_ble_array_offset] = rx_data.data[1] + 1;//including the owner of the table
+            ds_ble_array[ds_ble_array_offset] = rx_data.data[1];//wasm flag
+            ds_ble_array_offset += 1;
+            ds_ble_array[ds_ble_array_offset] = rx_data.data[2] + 1;//including the owner of the table
             ds_ble_array_offset += 1;
 
             for(int i=0; i<6; i++){
@@ -1038,11 +1045,11 @@ void esp_mesh_p2p_rx_main(void *arg)
 
             ds_ble_array_offset += 6;
 
-            for(int j=0; j<rx_data.data[1]*6; j++){
-                ds_ble_array[ds_ble_array_offset + j] = rx_data.data[j+2];
+            for(int j=0; j<rx_data.data[2]*6; j++){
+                ds_ble_array[ds_ble_array_offset + j] = rx_data.data[j+3];
             }
 
-            ds_ble_array_offset = ds_ble_array_offset + rx_data.data[1]*6; //TODO: check this offset
+            ds_ble_array_offset = ds_ble_array_offset + rx_data.data[2]*6; //TODO: check this offset
             
             
             ESP_LOGI(MESH_TAG, "num_received_ds_table: %d", num_received_ds_table);
