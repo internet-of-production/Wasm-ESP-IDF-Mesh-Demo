@@ -24,3 +24,7 @@
 //Wasm Update
 #define SEND_WASM_INIT 0xB0 
 #define SEND_WASM 0xB1
+
+//Event of modification on the mesh graph UI
+#define ADD_NEW_DATA_DEST 0xC1
+#define REMOVE_DATA_DEST 0xC2

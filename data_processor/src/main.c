@@ -201,29 +201,6 @@ void set_default_destination(){
     }    
 }
 
-//TODO: This function assumes that free space are in the tail position 
-void add_to_data_stream_table(uint8_t* add_addr){
-    if(num_of_destination == MESH_DATA_STREAM_TABLE_LEN){
-        ESP_LOGE(MESH_TAG, "MAX number of data destination is %d\n", MESH_DATA_STREAM_TABLE_LEN);
-    }
-    else{
-        for(int j=0; j<6;j++){
-            data_stream_table[num_of_destination].addr[j] = add_addr[j];
-        } 
-        num_of_destination++;
-    }
-}
-//TODO: implement!
-void remove_from_data_stream_table(uint8_t* rm_addr){
-    if(num_of_destination == 0){
-        ESP_LOGE(MESH_TAG, "The data stream table is empty\n");
-    }
-    else{
-        //Search the given rm_addr and remove.
-        //To make free the tail space, shift remaining addresses
-        //num_of_destination--;
-    }
-}
 /******************
  * BLE
  ******************/
@@ -1012,6 +989,17 @@ void esp_mesh_p2p_tx_main(void *arg)
             tx_buf[j] = (uint8_t)message[j];
         }
 
+        for (int i = 0; i < num_of_destination; i++) {
+            err = esp_mesh_send(&data_stream_table[i], &data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                         err, data.proto, data.tos);
+            }
+        }
+
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
         if (route_table_size < 10) {
             vTaskDelay(1 * 3000 / portTICK_PERIOD_MS);
@@ -1229,6 +1217,40 @@ void esp_mesh_p2p_rx_main(void *arg)
                     esp_restart(); //TODO: check if it works without restart.
                 }
 
+            break;
+        case ADD_NEW_DATA_DEST: //|MSG_CODE|DEST_MAC|
+            if(num_of_destination <= MESH_DATA_STREAM_TABLE_LEN){
+                for(int i=0; i<6; i++){
+                    data_stream_table[num_of_destination].addr[i] = rx_data.data[i+1];
+                }
+                num_of_destination++;
+            }
+            break;
+        case REMOVE_DATA_DEST: //|MSG_CODE|DEST_MAC|
+            if(num_of_destination > 0){
+                int k=0;
+                int count_same_value = 0;
+                for(k=0; k<num_of_destination; k++){
+                    for(int j=0; j<6; j++){
+                        if(data_stream_table[k].addr[j]==rx_data.data[j+1]){ 
+                            count_same_value++;
+                        }
+                    }
+                    if(count_same_value==6){//found the MAC to be removed?
+                        break;
+                    }
+                    else{
+                        count_same_value = 0;
+                    }
+                }
+                
+                for(; k<=num_of_destination; k++){ //shift one step addresses to the top of list.
+                    for(int m=0; m<6; m++){
+                        data_stream_table[num_of_destination-1].addr[m] = data_stream_table[num_of_destination].addr[m];
+                    }
+                }
+                num_of_destination--;
+            }
             break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);

@@ -192,25 +192,6 @@ void set_default_destination(){
     }    
 }
 
-//TODO: implement!
-void add_to_data_stream_table(uint8_t* add_addr){
-    if(num_of_destination == MESH_DATA_STREAM_TABLE_LEN){
-        ESP_LOGE(MESH_TAG, "MAX number of data destination is %d\n", MESH_DATA_STREAM_TABLE_LEN);
-    }
-    else{
-        num_of_destination++;
-    }
-}
-//TODO: implement!
-void remove_from_data_stream_table(uint8_t* rm_addr){
-    if(num_of_destination == 0){
-        ESP_LOGE(MESH_TAG, "The data stream table is empty\n");
-    }
-    else{
-        //Search the given rm_addr and remove.
-        //num_of_destination--;
-    }
-}
 
 void esp_mesh_p2p_tx_main(void *arg)
 {
@@ -299,7 +280,7 @@ void esp_mesh_p2p_rx_main(void *arg)
         switch (rx_data.data[0])
         {
         case INFORM_NODE_TXT_MSG:
-            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
             break;
         case GET_ROUTING_TABLE:
             //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
@@ -394,6 +375,40 @@ void esp_mesh_p2p_rx_main(void *arg)
             break;
         case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
             //TODO: add code if needed
+            break;
+        case ADD_NEW_DATA_DEST: //|MSG_CODE|DEST_MAC|
+            if(num_of_destination <= MESH_DATA_STREAM_TABLE_LEN){
+                for(int i=0; i<6; i++){
+                    data_stream_table[num_of_destination].addr[i] = rx_data.data[i+1];
+                }
+                num_of_destination++;
+            }
+            break;
+        case REMOVE_DATA_DEST: //|MSG_CODE|DEST_MAC|
+            if(num_of_destination > 0){
+                int k=0;
+                int count_same_value = 0;
+                for(k=0; k<num_of_destination; k++){
+                    for(int j=0; j<6; j++){
+                        if(data_stream_table[k].addr[j]==rx_data.data[j+1]){ 
+                            count_same_value++;
+                        }
+                    }
+                    if(count_same_value==6){//found the MAC to be removed?
+                        break;
+                    }
+                    else{
+                        count_same_value = 0;
+                    }
+                }
+                
+                for(; k<=num_of_destination; k++){ //shift one step addresses to the top of list.
+                    for(int m=0; m<6; m++){
+                        data_stream_table[num_of_destination-1].addr[m] = data_stream_table[num_of_destination].addr[m];
+                    }
+                }
+                num_of_destination--;
+            }
             break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);

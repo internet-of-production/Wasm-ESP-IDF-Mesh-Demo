@@ -37,7 +37,7 @@
 #define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
 #define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
 #define MESH_NODE_NAME "data_processor"
-#define MESH_DATA_STREAM_TABLE_LEN 2*6 // there is two receiver
+#define MESH_DATA_STREAM_TABLE_LEN 2 // there is two receiver
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
@@ -68,6 +68,7 @@ uint8_t ds_ble_array_offset = 1;
 uint8_t num_received_ds_table = 0;
 bool this_node_is_Wasm_target = true;
 mesh_addr_t wasm_target;
+mesh_addr_t mesh_target;
 
 static const char *MESH_TAG = "mesh_main";
 static const char *TAG = "wasm";
@@ -90,29 +91,6 @@ void set_default_destination(){
     }    
 }
 
-//TODO: This function assumes that free space are in the tail position 
-void add_to_data_stream_table(uint8_t* add_addr){
-    if(num_of_destination == MESH_DATA_STREAM_TABLE_LEN){
-        ESP_LOGE(MESH_TAG, "MAX number of data destination is %d\n", MESH_DATA_STREAM_TABLE_LEN);
-    }
-    else{
-        for(int j=0; j<6;j++){
-            data_stream_table[num_of_destination].addr[j] = add_addr[j];
-        } 
-        num_of_destination++;
-    }
-}
-//TODO: implement!
-void remove_from_data_stream_table(uint8_t* rm_addr){
-    if(num_of_destination == 0){
-        ESP_LOGE(MESH_TAG, "The data stream table is empty\n");
-    }
-    else{
-        //Search the given rm_addr and remove.
-        //To make free the tail space, shift remaining addresses
-        //num_of_destination--;
-    }
-}
 /******************
  * BLE
  ******************/
@@ -747,8 +725,114 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
                 }
 
             }
-        }
+            else {
+                if(param->write.value[0] == 0x01){
+                    wasm_packet_number = (param->write.value[1]) << 8 | param->write.value[2];
 
+                    uint8_t thisMAC[6] = {0};
+                    ESP_ERROR_CHECK(esp_read_mac(thisMAC, ESP_MAC_WIFI_STA));
+                    for(int i=0;i<6;i++){
+                        wasm_target.addr[i] = param->write.value[3+i];
+                    }
+
+                    //Check if the destination of new Wasm is this node
+                    this_node_is_Wasm_target = true;
+                    for(int j=0; j<6; j++){
+                        if(wasm_target.addr[j] != thisMAC[j]){
+                            this_node_is_Wasm_target = false;
+                            //TODO: send initial message to clear Wasm file at the receiver!!
+                            tx_buf[0] = SEND_WASM_INIT;
+                            tx_buf[1] = param->write.value[1];
+                            tx_buf[2] = param->write.value[2];
+                            err = esp_mesh_send(&wasm_target, &data, MESH_DATA_P2P, NULL, 0);
+
+                            if (err) {
+                                ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
+                            }
+
+                            break;
+                        }
+                    }
+                    if(this_node_is_Wasm_target){
+                        int result = remove("/spiffs/main.wasm");
+                        if(result){
+                            ESP_LOGE(GATTS_TAG, "Failed to remove wasm file ");
+                        }
+                    }
+                }
+                else if(param->write.value[0] == 0x02){
+                    if(!wasm_packet_number){
+                        ESP_LOGE(GATTS_TAG, "Missing the initial packet for uploading wasm");
+                        return;
+                    }
+                    if(this_node_is_Wasm_target){
+                        wasm_current_transmit_offset = (param->write.value[1]) << 8 | param->write.value[2];
+                        FILE* wasmFile = fopen("/spiffs/main.wasm", "ab");//Open with append mode
+                        if (wasmFile == NULL) {
+                            ESP_LOGE(GATTS_TAG, "Failed to open file for reading");
+                            return;
+                        }
+                        size_t written_length = fwrite(param->write.value+3, 1, param->write.len-3, wasmFile);
+                        fclose(wasmFile);
+                        if(!written_length){
+                            ESP_LOGE(GATTS_TAG, "Failed to write wasm binary");
+                            return;
+                        }
+                        if(wasm_current_transmit_offset+1 == wasm_packet_number){
+                            esp_restart();
+                        }
+                    }
+                    else{
+                        //SEND Wasm packets to the target node via MESH
+                        tx_buf[0] = SEND_WASM;
+                        tx_buf[1] = param->write.len;
+                        for(int i=0; i<param->write.len; i++){
+                            tx_buf[i+2] = param->write.value[i];
+                        }
+                        err = esp_mesh_send(&wasm_target, &data, MESH_DATA_P2P, NULL, 0);
+
+                        if (err) {
+                            ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM: err code %x", err);
+                        }
+                    }
+                }
+                else if(param->write.value[0] == 0x03){
+                    //an edge target on the mesh graph is changed ; add the data destination to the DS table of corresponding node
+                    tx_buf[0] = ADD_NEW_DATA_DEST;
+                    for(int j=0; j<6; j++){
+                        mesh_target.addr[j] = param->write.value[j+1];
+                    }
+                    for(int i=0; i<6; i++){
+                            tx_buf[i+1] = param->write.value[i+7];
+                    }
+                    err = esp_mesh_send(&mesh_target, &data, MESH_DATA_P2P, NULL, 0);
+
+                    if (err) {
+                        ESP_LOGE(MESH_TAG, "Error occured at sending message: ADD_NEW_DATA_DEST: err code %x", err);
+                    }
+                    
+                }
+                else if(param->write.value[0] == 0x04){
+                    //an edge target on the mesh graph is changed ; delete the data destination from the DS table of corresponding node
+                    tx_buf[0] = REMOVE_DATA_DEST;
+                    for(int j=0; j<6; j++){
+                        mesh_target.addr[j] = param->write.value[j+1];
+                    }
+                    for(int i=0; i<6; i++){
+                            tx_buf[i+1] = param->write.value[i+7];
+                    }
+                    err = esp_mesh_send(&mesh_target, &data, MESH_DATA_P2P, NULL, 0);
+
+                    if (err) {
+                        ESP_LOGE(MESH_TAG, "Error occured at sending message: ADD_NEW_DATA_DEST: err code %x", err);
+                    }
+                }
+                else {
+                    ESP_LOGI(GATTS_TAG, "Unknown package flag for updating Wasm");
+                }
+            }
+        }
+        example_write_event_env(gatts_if, &b_prepare_write_env, param);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
@@ -881,11 +965,22 @@ void esp_mesh_p2p_tx_main(void *arg)
                      esp_mesh_get_routing_table_size(), send_count);
         }
 
-        char* message = "Hello, here is data reader";
+        char* message = "Hello, here is data monitor";
         int len = strlen(message);
         tx_buf[0] = INFORM_NODE_TXT_MSG;
         for(int j=1; j<len+1; j++){
             tx_buf[j] = (uint8_t)message[j];
+        }
+
+        for (int i = 0; i < num_of_destination; i++) {
+            err = esp_mesh_send(&data_stream_table[i], &data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                         err, data.proto, data.tos);
+            }
         }
 
         /* if route_table_size is less than 10, add delay to avoid watchdog in this task. */
@@ -1104,6 +1199,40 @@ void esp_mesh_p2p_rx_main(void *arg)
                 esp_restart(); //TODO: check if it works without restart.
             }
 
+            break;
+        case ADD_NEW_DATA_DEST: //|MSG_CODE|DEST_MAC|
+            if(num_of_destination <= MESH_DATA_STREAM_TABLE_LEN){
+                for(int i=0; i<6; i++){
+                    data_stream_table[num_of_destination].addr[i] = rx_data.data[i+1];
+                }
+                num_of_destination++;
+            }
+            break;
+        case REMOVE_DATA_DEST: //|MSG_CODE|DEST_MAC|
+            if(num_of_destination > 0){
+                int k=0;
+                int count_same_value = 0;
+                for(k=0; k<num_of_destination; k++){
+                    for(int j=0; j<6; j++){
+                        if(data_stream_table[k].addr[j]==rx_data.data[j+1]){ 
+                            count_same_value++;
+                        }
+                    }
+                    if(count_same_value==6){//found the MAC to be removed?
+                        break;
+                    }
+                    else{
+                        count_same_value = 0;
+                    }
+                }
+                
+                for(; k<=num_of_destination; k++){ //shift one step addresses to the top of list.
+                    for(int m=0; m<6; m++){
+                        data_stream_table[num_of_destination-1].addr[m] = data_stream_table[num_of_destination].addr[m];
+                    }
+                }
+                num_of_destination--;
+            }
             break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
