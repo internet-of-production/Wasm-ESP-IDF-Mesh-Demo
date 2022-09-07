@@ -74,7 +74,7 @@ int wasmResult = 0;
  * @fn 
  * WASM setup using wasm3
  */
-static void run_wasm()
+static void wasm_init()
 {
     // load wasm from SPIFFS
     /* If default CONFIG_ARDUINO_LOOP_STACK_SIZE 8192 < wasmFile,
@@ -218,8 +218,8 @@ void esp_mesh_p2p_tx_main(void *arg)
         char* message = "Hello, here is the processor";
         int len = strlen(message);
         tx_buf[0] = INFORM_NODE_TXT_MSG;
-        for(int j=1; j<len+1; j++){
-            tx_buf[j] = (uint8_t)message[j];
+        for(int j=0; j<len; j++){
+            tx_buf[j+1] = (uint8_t)message[j];
         }
 
         for (int i = 0; i < num_of_destination; i++) {
@@ -274,7 +274,7 @@ void esp_mesh_p2p_rx_main(void *arg)
         switch (rx_data.data[0])
         {
         case INFORM_NODE_TXT_MSG:
-            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
             break;
         case GET_ROUTING_TABLE:
             //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
@@ -375,7 +375,11 @@ void esp_mesh_p2p_rx_main(void *arg)
                 }
                 if(wasm_current_transmit_offset+1 == wasm_packet_number){
                     ESP_LOGI(MESH_TAG, "Wasm update succeeded");
-                    esp_restart(); //TODO: check if it works without restart.
+                    //TODO: check if it works without restart.
+                    wasm_init();
+                    wasm_task();
+                    ESP_LOGI(TAG, "Wasm result:");
+                    ESP_LOGI(TAG,"%d", wasmResult);
                 }
 
             break;
@@ -737,7 +741,7 @@ void app_main() {
 
 
     ESP_LOGI(TAG, "Loading wasm");
-    run_wasm(NULL);
+    wasm_init(NULL);
 
     wasm_task();
     ESP_LOGI(TAG, "Wasm result:");
