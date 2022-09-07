@@ -280,7 +280,7 @@ void esp_mesh_p2p_rx_main(void *arg)
         switch (rx_data.data[0])
         {
         case INFORM_NODE_TXT_MSG:
-            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
+            ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
             break;
         case GET_ROUTING_TABLE:
             //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
