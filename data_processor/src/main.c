@@ -59,6 +59,7 @@ static const char *MESH_TAG = "mesh_main";
 static const char *TAG = "wasm";
 
 #define HAS_WASM_MODULE
+#define USE_DEFAULT_WASM
 #define WASM_STACK_SLOTS    4000
 #define CALC_INPUT  2
 #define FATAL(func, msg) { ESP_LOGE(TAG, "Fatal: " func " "); ESP_LOGE(TAG, "%s", msg);}
@@ -69,6 +70,7 @@ IM3Runtime runtime;
 IM3Module module;
 IM3Function calcWasm;
 int wasmResult = 0;
+int num_wasm_parameters = 0;
 
 /**
  * @fn 
@@ -146,9 +148,13 @@ static void wasm_init()
  */
 
   void wasm_task(){
-    const void *i_argptrs[CALC_INPUT];
-    char inputBytes[CALC_INPUT] = {0x01, 0x02};
+    const void *i_argptrs[num_wasm_parameters];
+    char inputBytes[num_wasm_parameters];
     M3Result result = m3Err_none;
+
+    for(int j=0; j<num_wasm_parameters; j++){
+        inputBytes[j]=0x01;
+    }
     
     for(int i=0; i<CALC_INPUT ;i++){
       i_argptrs[i] = &inputBytes[i];
@@ -739,6 +745,51 @@ void app_main() {
              esp_mesh_is_root_fixed() ? "root fixed" : "root not fixed",
              esp_mesh_get_topology(), esp_mesh_get_topology() ? "(chain)":"(tree)", esp_mesh_is_ps_enabled()); 
 
+
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } else {
+        printf("Done\n");
+
+#ifdef USE_DEFAULT_WASM
+    // Write
+    printf("set #parameter for wasm ... ");
+    err = nvs_set_i32(my_handle, "num_wasmparams", 2);
+    if(err){
+        printf("Failed! code: %x\n", err);
+    }
+    else{
+        printf("Done\n");
+    }
+    
+
+    // Commit written value.
+    // After setting any values, nvs_commit() must be called to ensure changes are written
+    // to flash storage. Implementations may write to storage at other times,
+    // but this is not guaranteed.
+    printf("Committing updates in NVS ... ");
+    err = nvs_commit(my_handle);
+    printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+#endif
+    // Read
+    printf("Reading restart counter from NVS ... ");
+    err = nvs_get_i32(my_handle, "num_wasmparams", &num_wasm_parameters);
+    switch (err) {
+        case ESP_OK:
+            printf("Done\n");
+            break;
+        case ESP_ERR_NVS_NOT_FOUND:
+            printf("The value is not initialized yet!\n");
+            break;
+        default :
+            printf("Error (%s) reading!\n", esp_err_to_name(err));
+        }
+
+        // Close
+        nvs_close(my_handle);
+    }
 
     ESP_LOGI(TAG, "Loading wasm");
     wasm_init(NULL);
