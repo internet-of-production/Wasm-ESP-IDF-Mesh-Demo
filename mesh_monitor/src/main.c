@@ -449,7 +449,7 @@ static void gatts_profile_wasm_event_handler(esp_gatts_cb_event_t event, esp_gat
                     uint8_t thisMAC[6] = {0};
                     ESP_ERROR_CHECK(esp_read_mac(thisMAC, ESP_MAC_WIFI_STA));
                     for(int i=0;i<6;i++){
-                        wasm_target.addr[i] = param->write.value[3+i];
+                        wasm_target.addr[i] = param->write.value[4+i];
                     }
 
                     //Check if the destination of new Wasm is this node
@@ -461,6 +461,7 @@ static void gatts_profile_wasm_event_handler(esp_gatts_cb_event_t event, esp_gat
                             tx_buf[0] = SEND_WASM_INIT;
                             tx_buf[1] = param->write.value[1];
                             tx_buf[2] = param->write.value[2];
+                            tx_buf[3] = param->write.value[3];
                             err = esp_mesh_send(&wasm_target, &data, MESH_DATA_P2P, NULL, 0);
 
                             if (err) {
@@ -726,77 +727,32 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
 
             }
             else {
-                if(param->write.value[0] == 0x01){
-                    wasm_packet_number = (param->write.value[1]) << 8 | param->write.value[2];
-
-                    uint8_t thisMAC[6] = {0};
-                    ESP_ERROR_CHECK(esp_read_mac(thisMAC, ESP_MAC_WIFI_STA));
-                    for(int i=0;i<6;i++){
-                        wasm_target.addr[i] = param->write.value[3+i];
-                    }
-
-                    //Check if the destination of new Wasm is this node
-                    this_node_is_Wasm_target = true;
+                switch (param->write.value[0])
+                {
+                case BLE_WASM_MOVING:
+                    tx_buf[0] = WASM_MOVING;
                     for(int j=0; j<6; j++){
-                        if(wasm_target.addr[j] != thisMAC[j]){
-                            this_node_is_Wasm_target = false;
-                            //TODO: send initial message to clear Wasm file at the receiver!!
-                            tx_buf[0] = SEND_WASM_INIT;
-                            tx_buf[1] = param->write.value[1];
-                            tx_buf[2] = param->write.value[2];
-                            err = esp_mesh_send(&wasm_target, &data, MESH_DATA_P2P, NULL, 0);
-
-                            if (err) {
-                                ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
-                            }
-
-                            break;
-                        }
+                        mesh_target.addr[j] = param->write.value[j+1];
                     }
-                    if(this_node_is_Wasm_target){
-                        int result = remove("/spiffs/main.wasm");
-                        if(result){
-                            ESP_LOGE(GATTS_TAG, "Failed to remove wasm file ");
-                        }
+                    for(int i=0; i<6; i++){
+                            tx_buf[i+1] = param->write.value[i+7];
                     }
-                }
-                else if(param->write.value[0] == 0x02){
-                    if(!wasm_packet_number){
-                        ESP_LOGE(GATTS_TAG, "Missing the initial packet for uploading wasm");
-                        return;
+                    err = esp_mesh_send(&mesh_target, &data, MESH_DATA_P2P, NULL, 0);
+                    if (err) {
+                        ESP_LOGE(MESH_TAG, "Error occured at sending message: WASM_MOVING: err code %x", err);
                     }
-                    if(this_node_is_Wasm_target){
-                        wasm_current_transmit_offset = (param->write.value[1]) << 8 | param->write.value[2];
-                        FILE* wasmFile = fopen("/spiffs/main.wasm", "ab");//Open with append mode
-                        if (wasmFile == NULL) {
-                            ESP_LOGE(GATTS_TAG, "Failed to open file for reading");
-                            return;
-                        }
-                        size_t written_length = fwrite(param->write.value+3, 1, param->write.len-3, wasmFile);
-                        fclose(wasmFile);
-                        if(!written_length){
-                            ESP_LOGE(GATTS_TAG, "Failed to write wasm binary");
-                            return;
-                        }
-                        if(wasm_current_transmit_offset+1 == wasm_packet_number){
-                            esp_restart();
-                        }
+                    break;
+                case BLE_WASM_OFF_MSG:
+                    tx_buf[0] = WASM_OFF_MSG;
+                    for(int j=0; j<6; j++){
+                        mesh_target.addr[j] = param->write.value[j+1];
                     }
-                    else{
-                        //SEND Wasm packets to the target node via MESH
-                        tx_buf[0] = SEND_WASM;
-                        tx_buf[1] = param->write.len;
-                        for(int i=0; i<param->write.len; i++){
-                            tx_buf[i+2] = param->write.value[i];
-                        }
-                        err = esp_mesh_send(&wasm_target, &data, MESH_DATA_P2P, NULL, 0);
-
-                        if (err) {
-                            ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM: err code %x", err);
-                        }
+                    err = esp_mesh_send(&mesh_target, &data, MESH_DATA_P2P, NULL, 0);
+                    if (err) {
+                        ESP_LOGE(MESH_TAG, "Error occured at sending message: WASM_OFF_MSG: err code %x", err);
                     }
-                }
-                else if(param->write.value[0] == 0x03){
+                    break;
+                case BLE_ADD_DATA_DEST:
                     //an edge target on the mesh graph is changed ; add the data destination to the DS table of corresponding node
                     tx_buf[0] = ADD_NEW_DATA_DEST;
                     for(int j=0; j<6; j++){
@@ -810,9 +766,8 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
                     if (err) {
                         ESP_LOGE(MESH_TAG, "Error occured at sending message: ADD_NEW_DATA_DEST: err code %x", err);
                     }
-                    
-                }
-                else if(param->write.value[0] == 0x04){
+                    break;
+                case BLE_REMOVE_DATA_DEST:
                     //an edge target on the mesh graph is changed ; delete the data destination from the DS table of corresponding node
                     tx_buf[0] = REMOVE_DATA_DEST;
                     for(int j=0; j<6; j++){
@@ -824,11 +779,13 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
                     err = esp_mesh_send(&mesh_target, &data, MESH_DATA_P2P, NULL, 0);
 
                     if (err) {
-                        ESP_LOGE(MESH_TAG, "Error occured at sending message: ADD_NEW_DATA_DEST: err code %x", err);
+                        ESP_LOGE(MESH_TAG, "Error occured at sending message: REMOVE_DATA_DEST: err code %x", err);
                     }
-                }
-                else {
+                    break;
+                
+                default:
                     ESP_LOGI(GATTS_TAG, "Unknown package flag for updating Wasm");
+                    break;
                 }
             }
         }
@@ -1083,11 +1040,9 @@ void esp_mesh_p2p_rx_main(void *arg)
         case GET_DATA_STREAM_TABLE: //| MSG Code | MAC addresse of the client |
             ESP_LOGI(MESH_TAG, "A Mesh-Message arrived: GET_DATA_STREAM_TABLE");
             tx_buf[0] = INFORM_DATA_STREAM_TABLE;
-            #ifdef USE_WASM
-            tx_buf[1] = 1; //WASM flag. Information of Wasm availability
-            #else
-            tx_buf[1] = 0;
-            #endif
+            
+            tx_buf[1] = 0;// This node has no wasm module.
+           
             tx_buf[2] = num_of_destination;
 
             if(num_of_destination != 0){

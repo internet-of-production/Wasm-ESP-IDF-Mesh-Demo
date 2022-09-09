@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <string.h>
+#include <math.h>
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -18,7 +19,7 @@
 //#define USE_BLE
 #include "ble-wasm.h"
 
-//#define USE_WASM
+#define USE_WASM
 
 #ifdef USE_WASM
 //wasm3
@@ -73,12 +74,19 @@ IM3Function calcWasm;
 int wasmResult = 0;
 #endif
 
+int num_wasm_parameters = 0;
+int new_num_wasm_param = 0;
+int wasm_module_stat = 1; //0: no wasm module, 1: wasm on, 2: wasm off
+int wasm_packet_number = 0;
+int wasm_current_transmit_offset = 0;
+mesh_addr_t wasm_target;
+
 /**
  * @fn 
  * WASM setup using wasm3
  */
 #ifdef USE_WASM
-static void run_wasm()
+static void wasm_init()
 {
     // load wasm from SPIFFS
     /* If default CONFIG_ARDUINO_LOOP_STACK_SIZE 8192 < wasmFile,
@@ -325,11 +333,7 @@ void esp_mesh_p2p_rx_main(void *arg)
             break;
         case GET_DATA_STREAM_TABLE: //| MSG Code | MAC addresse of the client |
             tx_buf[0] = INFORM_DATA_STREAM_TABLE;
-            #ifdef USE_WASM
-            tx_buf[1] = 1; //WASM flag. Information of Wasm availability
-            #else
-            tx_buf[1] = 0;
-            #endif
+            tx_buf[1] = wasm_module_stat; //0: no wasm module, 1: wasm on, 2: wasm off
             tx_buf[2] = num_of_destination;
 
             if(num_of_destination != 0){
@@ -376,6 +380,115 @@ void esp_mesh_p2p_rx_main(void *arg)
         case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
             //TODO: add code if needed
             break;
+        case SEND_WASM_INIT:
+            //Receive wasm init msg. | MSG_CODE| #packet (upperbyte) | #packet (lower byte)| #parameter |
+            wasm_packet_number = (rx_data.data[1]) << 8 | rx_data.data[2];
+            new_num_wasm_param = rx_data.data[3];
+            ESP_LOGI(MESH_TAG, "Init for Wasm update. #packet is %d", wasm_packet_number);
+                    int result = remove("/spiffs/main.wasm"); //clear current wasm file
+                    if(result){
+                        ESP_LOGE(MESH_TAG, "Failed to remove wasm file ");
+                    }
+                    ESP_LOGI(MESH_TAG, "remove wasm file was successful");
+
+            break;
+        case SEND_WASM:
+            //Receive wasm | MSG_CODE| payload_length from here to end | write_code (BLE) | current_offset (upperbyte) | current_offset (lower byte)| | Wasm binary |
+            wasm_current_transmit_offset = (rx_data.data[3]) << 8 | rx_data.data[4];
+                FILE* wasmFile = fopen("/spiffs/main.wasm", "ab");//Open with append mode
+                if (wasmFile == NULL) {
+                    ESP_LOGE(MESH_TAG, "Failed to open file for reading");
+                    return;
+                }
+                ESP_LOGI(MESH_TAG, "Write new wasm binary chunk");
+                size_t write_len = rx_data.data[1]-3;
+                size_t written_length = fwrite(rx_data.data+5, 1, write_len, wasmFile);
+                ESP_LOGI(MESH_TAG, "Write new wasm binary chunk end");
+                fclose(wasmFile);
+                if(!written_length){
+                    ESP_LOGE(MESH_TAG, "Failed to write wasm binary");
+                    return;
+                }
+                if(wasm_current_transmit_offset+1 == wasm_packet_number){
+                    ESP_LOGI(MESH_TAG, "Wasm update succeeded");
+                    num_wasm_parameters = new_num_wasm_param;
+                    //store_wasm_num_param(new_num_wasm_param);
+                    //set_wasm_on();
+                    wasm_init();
+                    wasm_task();
+                    ESP_LOGI(TAG, "Wasm result:");
+                    ESP_LOGI(TAG,"%d", wasmResult);
+                }
+
+            break;
+        case WASM_OFF_MSG:
+            //set_wasm_off();
+            //TODO: Delete Task executing Wasm function
+            break;
+        case WASM_MOVING: //|MSG_CODE| WASM TARGET MAC|
+        for(int i=0;i<6;i++){
+                    wasm_target.addr[i] = rx_data.data[i+1];
+                }
+    //read wasm file
+        FILE* file = fopen("/spiffs/main.wasm", "rb");//Open with binary read mode
+        if (file == NULL) {
+            ESP_LOGE(MESH_TAG, "Failed to open file for reading");
+            return;
+        }
+        fseek(file, 0, SEEK_END); // seek to end of file
+        long size = ftell(file);  // get current file pointer
+        fseek(file, 0, SEEK_SET); //seek to head of file
+        char* buf = (char *) malloc (size);
+        fread(buf, size, 1, file);
+    //moving wasm to another node
+        tx_buf[0] = SEND_WASM_INIT;
+        int num_packet = ceil((double)size/(double)(MESH_MTU-5));
+        tx_buf[1] = num_packet >> 8;
+        tx_buf[2] = num_packet % 256;
+        tx_buf[3] = (uint8_t)num_wasm_parameters;
+        ESP_LOGI(MESH_TAG, "packet size for wasm moving: %ld", size);
+        //ESP_LOGI(MESH_TAG, "packets fraction for wasm moving: %f", size/(MESH_MTU-5));
+        ESP_LOGI(MESH_TAG, "#packets for wasm moving: %d", num_packet);
+        err = esp_mesh_send(&wasm_target, &tx_data, MESH_DATA_P2P, NULL, 0);
+
+        if (err) {
+            ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
+            break;
+        }
+
+        //| MSG_CODE| payload_length from here to end | write_code (BLE) | current_offset (upperbyte) | current_offset (lower byte)| Wasm binary |
+        for(int i=0; i<num_packet; i++){
+            tx_buf[0] = SEND_WASM;
+            tx_buf[2] = 0;
+            tx_buf[3] = i >>8;
+            tx_buf[4] = i % 256;
+
+            if(i+1 != num_packet){
+                tx_buf[1] = (uint8_t)(MESH_MTU - 2);
+                for(int j=0; j<MESH_MTU-5; j++){
+                    tx_buf[j+5] = buf[i*(MESH_MTU-5)+j];
+                }
+            }
+            else{
+                int last_payload_size = size % (MESH_MTU - 5);
+                tx_buf[1] = last_payload_size+3;
+                for(int j=0; j<last_payload_size; j++){
+                    tx_buf[j+5] = buf[i*(MESH_MTU-5)+j];
+                }
+            }
+
+            err = esp_mesh_send(&wasm_target, &tx_data, MESH_DATA_P2P, NULL, 0);
+
+            if (err) {
+                ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
+                break;
+            }
+        }
+
+        //set_wasm_off();
+        //TODO: stop wasm task
+
+        break;
         case ADD_NEW_DATA_DEST: //|MSG_CODE|DEST_MAC|
             if(num_of_destination <= MESH_DATA_STREAM_TABLE_LEN){
                 for(int i=0; i<6; i++){
@@ -826,7 +939,7 @@ void app_main() {
 
     #ifdef USE_WASM
         ESP_LOGI(TAG, "Loading wasm");
-        run_wasm(NULL);
+        wasm_init(NULL);
 
         wasm_task();
         ESP_LOGI(TAG, "Wasm result:");
