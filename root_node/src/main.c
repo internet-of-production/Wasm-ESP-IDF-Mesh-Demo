@@ -15,15 +15,10 @@
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
 
-#define USE_WASM
-
-#ifdef USE_WASM
 //wasm3
 #include "wasm3.h"
 #include "m3_env.h"
 #include "wasm3_defs.h"
-
-#endif
 
 #define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
 #define TX_SIZE          (1460) //MTU of outgoing packets. 
@@ -62,26 +57,109 @@ static const char *TAG = "wasm";
 #define FATAL(func, msg) { ESP_LOGE(TAG, "Fatal: " func " "); ESP_LOGE(TAG, "%s", msg);}
 #define BASE_PATH "/spiffs"
 
-#ifdef USE_WASM
+#define USE_DEFAULT_WASM
+#define DEFAULT_WASM_PARAM_NUM 2
+
+#define NO_WASM_MODULE 0
+#define WASM_ON 1
+#define WASM_OFF 2
+
 IM3Environment env;
 IM3Runtime runtime;
 IM3Module module;
 IM3Function calcWasm;
 int wasmResult = 0;
-#endif
 
 int num_wasm_parameters = 0;
 int new_num_wasm_param = 0;
-int wasm_module_stat = 1; //0: no wasm module, 1: wasm on, 2: wasm off
+int wasm_module_stat = WASM_ON; //0: no wasm module, 1: wasm on, 2: wasm off
 int wasm_packet_number = 0;
 int wasm_current_transmit_offset = 0;
 mesh_addr_t wasm_target;
+
+void set_wasm_off(){
+    wasm_module_stat = WASM_OFF;
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } 
+    else {
+        printf("Done\n");
+     printf("set wasm off... ");
+        err = nvs_set_i32(my_handle, "wasm_stat", WASM_OFF);
+        if(err){
+            printf("Failed! code: %x\n", err);
+        }
+        else{
+            printf("Done\n");
+        }
+        // Commit written value.
+        // After setting any values, nvs_commit() must be called to ensure changes are written
+        // to flash storage. Implementations may write to storage at other times,
+        // but this is not guaranteed.
+        printf("Committing updates in NVS ... ");
+        err = nvs_commit(my_handle);
+        printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+    }
+
+    // Close
+    nvs_close(my_handle);
+}
+
+void set_wasm_on(){
+    wasm_module_stat = WASM_ON;
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } 
+    else {
+        printf("Done\n");
+        printf("set wasm on... ");
+        err = nvs_set_i32(my_handle, "wasm_stat", WASM_ON);
+        if(err){
+            printf("Failed! code: %x\n", err);
+        }
+        else{
+            printf("Done\n");
+        }
+        // Commit written value.
+        // After setting any values, nvs_commit() must be called to ensure changes are written
+        // to flash storage. Implementations may write to storage at other times,
+        // but this is not guaranteed.
+        printf("Committing updates in NVS ... ");
+        err = nvs_commit(my_handle);
+        printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+    }
+
+    // Close
+    nvs_close(my_handle);
+}
+
+void store_wasm_num_param(int num){
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } 
+    else {
+        printf("Done\n");
+     printf("set #parameter for wasm ... ");
+        err = nvs_set_i32(my_handle, "num_wasmparams", num);
+        if(err){
+            printf("Failed! code: %x\n", err);
+        }
+        else{
+            printf("Done\n");
+        }
+    }
+}
 
 /**
  * @fn 
  * WASM setup using wasm3
  */
-#ifdef USE_WASM
 static void wasm_init()
 {
     // load wasm from SPIFFS
@@ -121,20 +199,20 @@ static void wasm_init()
     //uint8_t* wasm = (uint8_t*)build_app_wasm;
 
     env = m3_NewEnvironment ();
-    if (!env) {/*setWasmInvalidFlag();*/ FATAL("NewEnvironment", "failed"); esp_restart();}
+    if (!env) {set_wasm_off(); FATAL("NewEnvironment", "failed"); esp_restart();}
 
     runtime = m3_NewRuntime (env, WASM_STACK_SLOTS, NULL);
-    if (!runtime) {/*setWasmInvalidFlag();*/ FATAL("m3_NewRuntime", "failed"); esp_restart();}
+    if (!runtime) {set_wasm_off(); FATAL("m3_NewRuntime", "failed"); esp_restart();}
 
     #ifdef WASM_MEMORY_LIMIT
     runtime->memoryLimit = WASM_MEMORY_LIMIT;
     #endif
 
     result = m3_ParseModule (env, &module, build_main_wasm, build_main_wasm_len);
-    if (result) {/*setWasmInvalidFlag();*/ FATAL("m3_ParseModule", result); esp_restart();}
+    if (result) {set_wasm_off(); FATAL("m3_ParseModule", result); esp_restart();}
 
     result = m3_LoadModule (runtime, module);
-    if (result) {/*setWasmInvalidFlag();*/ FATAL("m3_LoadModule", result); esp_restart();}
+    if (result) {set_wasm_off(); FATAL("m3_LoadModule", result); esp_restart();}
 
     // link
     //result = LinkArduino (runtime);
@@ -142,24 +220,26 @@ static void wasm_init()
 
 
     result = m3_FindFunction (&calcWasm, runtime, "calcWasm");
-    if (result) {/*setWasmInvalidFlag();*/ FATAL("m3_FindFunction(calcWasm)", result); esp_restart();}
+    if (result) {set_wasm_off(); FATAL("m3_FindFunction(calcWasm)", result); esp_restart();}
 
     ESP_LOGI(TAG, "Running WebAssembly...");
 
 }
-#endif
 
   /**
  * @fn 
  * Call WASM task
  */
-#ifdef USE_WASM
   void wasm_task(){
-    const void *i_argptrs[CALC_INPUT];
-    char inputBytes[CALC_INPUT] = {0x01, 0x02};
+    const void *i_argptrs[num_wasm_parameters];
+    char inputBytes[num_wasm_parameters];
     M3Result result = m3Err_none;
+
+    for(int j=0; j<num_wasm_parameters; j++){
+        inputBytes[j]=0x01;
+    }
     
-    for(int i=0; i<CALC_INPUT ;i++){
+    for(int i=0; i<num_wasm_parameters ;i++){
       i_argptrs[i] = &inputBytes[i];
     }
 
@@ -168,22 +248,21 @@ static void wasm_init()
     To get return, one have to call a function with m3_Call first, then call m3_GetResultsV(function, adress).
     (Apparently) m3_Call stores the result in the liner memory, then m3_GetResultsV accesses the address.
     */
-    result = m3_Call(calcWasm,CALC_INPUT,i_argptrs);                       
+    result = m3_Call(calcWasm, num_wasm_parameters,i_argptrs);                       
     if(result){
-      //setWasmInvalidFlag();
       FATAL("m3_Call(calcWasm):", result);
+      set_wasm_off();
       esp_restart();
     }
 
     result = m3_GetResultsV(calcWasm, &wasmResult);
     if(result){
-      //setWasmInvalidFlag();
       FATAL("m3_GetResultsV(calcWasm):", result);
+      set_wasm_off();
       esp_restart();
     }
 
   }
-#endif
 
 /************************************************************************
  * Management of data stream table in the mesh network
@@ -351,7 +430,7 @@ void esp_mesh_p2p_rx_main(void *arg)
             for(int j=0; j<6; j++){
                 tx_buf[j+1] = from.addr[j];
             }
-            //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
+            
             for (int i = 0; i < route_table_size; i++) {
                 err = esp_mesh_send(&route_table[i], &tx_data, MESH_DATA_P2P, NULL, 0);
                 if (err) {
@@ -362,9 +441,6 @@ void esp_mesh_p2p_rx_main(void *arg)
                             err, tx_data.proto, tx_data.tos);
                 } 
             }
-            break;
-        case INFORM_DATA_STREAM_TABLE: //| MSG Code | table length | MAC addresses |
-            //TODO: add code if needed
             break;
         case SEND_WASM_INIT:
             //Receive wasm init msg. | MSG_CODE| #packet (upperbyte) | #packet (lower byte)| #parameter |
@@ -398,81 +474,83 @@ void esp_mesh_p2p_rx_main(void *arg)
                 if(wasm_current_transmit_offset+1 == wasm_packet_number){
                     ESP_LOGI(MESH_TAG, "Wasm update succeeded");
                     num_wasm_parameters = new_num_wasm_param;
-                    //store_wasm_num_param(new_num_wasm_param);
-                    //set_wasm_on();
+                    store_wasm_num_param(new_num_wasm_param);
+                    set_wasm_on();
                     wasm_init();
                     wasm_task();
                     ESP_LOGI(TAG, "Wasm result:");
                     ESP_LOGI(TAG,"%d", wasmResult);
+                    ESP_LOGI(TAG, "#params:");
+                    ESP_LOGI(TAG,"%d", num_wasm_parameters);
                 }
 
             break;
         case WASM_OFF_MSG:
-            //set_wasm_off();
+            set_wasm_off();
             //TODO: Delete Task executing Wasm function
             break;
         case WASM_MOVING: //|MSG_CODE| WASM TARGET MAC|
-        for(int i=0;i<6;i++){
-                    wasm_target.addr[i] = rx_data.data[i+1];
-                }
-    //read wasm file
-        FILE* file = fopen("/spiffs/main.wasm", "rb");//Open with binary read mode
-        if (file == NULL) {
-            ESP_LOGE(MESH_TAG, "Failed to open file for reading");
-            return;
-        }
-        fseek(file, 0, SEEK_END); // seek to end of file
-        long size = ftell(file);  // get current file pointer
-        fseek(file, 0, SEEK_SET); //seek to head of file
-        char* buf = (char *) malloc (size);
-        fread(buf, size, 1, file);
-    //moving wasm to another node
-        tx_buf[0] = SEND_WASM_INIT;
-        int num_packet = ceil((double)size/(double)(MESH_MTU-5));
-        tx_buf[1] = num_packet >> 8;
-        tx_buf[2] = num_packet % 256;
-        tx_buf[3] = (uint8_t)num_wasm_parameters;
-        ESP_LOGI(MESH_TAG, "packet size for wasm moving: %ld", size);
-        //ESP_LOGI(MESH_TAG, "packets fraction for wasm moving: %f", size/(MESH_MTU-5));
-        ESP_LOGI(MESH_TAG, "#packets for wasm moving: %d", num_packet);
-        err = esp_mesh_send(&wasm_target, &tx_data, MESH_DATA_P2P, NULL, 0);
-
-        if (err) {
-            ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
-            break;
-        }
-
-        //| MSG_CODE| payload_length from here to end | write_code (BLE) | current_offset (upperbyte) | current_offset (lower byte)| Wasm binary |
-        for(int i=0; i<num_packet; i++){
-            tx_buf[0] = SEND_WASM;
-            tx_buf[2] = 0;
-            tx_buf[3] = i >>8;
-            tx_buf[4] = i % 256;
-
-            if(i+1 != num_packet){
-                tx_buf[1] = (uint8_t)(MESH_MTU - 2);
-                for(int j=0; j<MESH_MTU-5; j++){
-                    tx_buf[j+5] = buf[i*(MESH_MTU-5)+j];
-                }
+            for(int i=0;i<6;i++){
+                        wasm_target.addr[i] = rx_data.data[i+1];
+                    }
+            //read wasm file
+            FILE* file = fopen("/spiffs/main.wasm", "rb");//Open with binary read mode
+            if (file == NULL) {
+                ESP_LOGE(MESH_TAG, "Failed to open file for reading");
+                return;
             }
-            else{
-                int last_payload_size = size % (MESH_MTU - 5);
-                tx_buf[1] = last_payload_size+3;
-                for(int j=0; j<last_payload_size; j++){
-                    tx_buf[j+5] = buf[i*(MESH_MTU-5)+j];
-                }
-            }
-
+            fseek(file, 0, SEEK_END); // seek to end of file
+            long size = ftell(file);  // get current file pointer
+            fseek(file, 0, SEEK_SET); //seek to head of file
+            char* buf = (char *) malloc (size);
+            fread(buf, size, 1, file);
+            //moving wasm to another node
+            tx_buf[0] = SEND_WASM_INIT;
+            int num_packet = ceil((double)size/(double)(MESH_MTU-5));
+            tx_buf[1] = num_packet >> 8;
+            tx_buf[2] = num_packet % 256;
+            tx_buf[3] = (uint8_t)num_wasm_parameters;
+            ESP_LOGI(MESH_TAG, "packet size for wasm moving: %ld", size);
+            //ESP_LOGI(MESH_TAG, "packets fraction for wasm moving: %f", size/(MESH_MTU-5));
+            ESP_LOGI(MESH_TAG, "#packets for wasm moving: %d", num_packet);
             err = esp_mesh_send(&wasm_target, &tx_data, MESH_DATA_P2P, NULL, 0);
 
             if (err) {
                 ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
                 break;
             }
-        }
 
-        //set_wasm_off();
-        //TODO: stop wasm task
+            //| MSG_CODE| payload_length from here to end | write_code (BLE) | current_offset (upperbyte) | current_offset (lower byte)| Wasm binary |
+            for(int i=0; i<num_packet; i++){
+                tx_buf[0] = SEND_WASM;
+                tx_buf[2] = 0;
+                tx_buf[3] = i >>8;
+                tx_buf[4] = i % 256;
+
+                if(i+1 != num_packet){
+                    tx_buf[1] = (uint8_t)(MESH_MTU - 2);
+                    for(int j=0; j<MESH_MTU-5; j++){
+                        tx_buf[j+5] = buf[i*(MESH_MTU-5)+j];
+                    }
+                }
+                else{
+                    int last_payload_size = size % (MESH_MTU - 5);
+                    tx_buf[1] = last_payload_size+3;
+                    for(int j=0; j<last_payload_size; j++){
+                        tx_buf[j+5] = buf[i*(MESH_MTU-5)+j];
+                    }
+                }
+
+                err = esp_mesh_send(&wasm_target, &tx_data, MESH_DATA_P2P, NULL, 0);
+
+                if (err) {
+                    ESP_LOGE(MESH_TAG, "Error occured at sending message: SEND_WASM_INIT: err code %x", err);
+                    break;
+                }
+            }
+
+            set_wasm_off();
+            //TODO: stop wasm task
 
         break;
         case ADD_NEW_DATA_DEST: //|MSG_CODE|DEST_MAC|
@@ -874,14 +952,77 @@ void app_main() {
              esp_mesh_is_root_fixed() ? "root fixed" : "root not fixed",
              esp_mesh_get_topology(), esp_mesh_get_topology() ? "(chain)":"(tree)", esp_mesh_is_ps_enabled());
 
-    
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } 
+    else {
+        printf("Done\n");
 
-    #ifdef USE_WASM
+#ifdef USE_DEFAULT_WASM
+        // Write
+        printf("set #parameter for wasm ... ");
+        err = nvs_set_i32(my_handle, "num_wasmparams", DEFAULT_WASM_PARAM_NUM);
+        if(err){
+            printf("Failed! code: %x\n", err);
+        }
+        else{
+            printf("Done\n");
+        }
+
+        printf("set wasm stat ... ");
+        err = nvs_set_i32(my_handle, "wasm_stat", WASM_ON);//USE Wasm
+        if(err){
+            printf("Failed! code: %x\n", err);
+        }
+        else{
+            printf("Done\n");
+        }
+        
+
+        // Commit written value.
+        // After setting any values, nvs_commit() must be called to ensure changes are written
+        // to flash storage. Implementations may write to storage at other times,
+        // but this is not guaranteed.
+        printf("Committing updates in NVS ... ");
+        err = nvs_commit(my_handle);
+        printf((err != ESP_OK) ? "Failed!\n" : "Done\n");
+#endif
+        // Read
+        printf("Reading restart counter from NVS ... ");
+        err = nvs_get_i32(my_handle, "num_wasmparams", &num_wasm_parameters);
+        switch (err) {
+            case ESP_OK:
+                printf("Done\n");
+                break;
+            case ESP_ERR_NVS_NOT_FOUND:
+                printf("The value is not initialized yet!\n");
+                break;
+            default :
+                printf("Error (%s) reading!\n", esp_err_to_name(err));
+        }   
+        err = nvs_get_i32(my_handle, "wasm_stat", &wasm_module_stat);
+        switch (err) {
+            case ESP_OK:
+                printf("Done\n");
+                break;
+            case ESP_ERR_NVS_NOT_FOUND:
+                printf("The value is not initialized yet!\n");
+                break;
+            default :
+                printf("Error (%s) reading!\n", esp_err_to_name(err));
+            }   
+    }
+
+    // Close
+    nvs_close(my_handle);
+
+    if(wasm_module_stat==WASM_ON){
         ESP_LOGI(TAG, "Loading wasm");
         wasm_init(NULL);
-
         wasm_task();
         ESP_LOGI(TAG, "Wasm result:");
         ESP_LOGI(TAG,"%d", wasmResult);
-    #endif
+    }
 }
