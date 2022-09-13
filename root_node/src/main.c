@@ -15,10 +15,6 @@
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
 
-//BLE
-//#define USE_BLE
-#include "ble-wasm.h"
-
 #define USE_WASM
 
 #ifdef USE_WASM
@@ -230,7 +226,7 @@ void esp_mesh_p2p_tx_main(void *arg)
         for(int j=0; j<len; j++){
             tx_buf[j] = (uint8_t)message[j];
         }
-        //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
+        
         for (i = 0; i < route_table_size; i++) {
             err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
             if (err) {
@@ -271,10 +267,6 @@ void esp_mesh_p2p_rx_main(void *arg)
     tx_data.proto = MESH_PROTO_BIN;
     tx_data.tos = MESH_TOS_P2P;
 
-    uint8_t ds_ble_array[BLE_LOCAL_MTU]; //For data stream diagram
-    uint8_t ds_ble_array_offset = 1;
-    uint8_t num_received_ds_table = 0;
-
     is_running = true;
 
     while (is_running) {
@@ -296,7 +288,7 @@ void esp_mesh_p2p_rx_main(void *arg)
                                    CONFIG_MESH_ROUTE_TABLE_SIZE * 6, &route_table_size);
             //| MSG Code | table length | MAC addresses | name length | name string |
             tx_buf[0] = (uint8_t)INFORM_ROUTING_TABLE;
-            tx_buf[1] = (uint8_t)esp_mesh_get_routing_table_size(); //TODO:check this casting 
+            tx_buf[1] = (uint8_t)esp_mesh_get_routing_table_size(); 
             ESP_LOGI(MESH_TAG, "Stored routing table size: %d", tx_buf[1]);
             for(int j=0; j<route_table_size; j++){
                 for(int i=0;i<6;i++){
@@ -324,12 +316,6 @@ void esp_mesh_p2p_rx_main(void *arg)
                          MAC2STR(from.addr), esp_get_minimum_free_heap_size(),
                          err, tx_data.proto, tx_data.tos);
             }
-            break;
-        case INFORM_ROUTING_TABLE:
-            //| MSG Code | table length | MAC addresses | name length | name string |
-            //TODO: Send via BLE. Why are messages with INFORM_ROUTING... incomming after response above??
-            ESP_LOGI(MESH_TAG, "CODE: %d", rx_data.data[0]);
-            ESP_LOGI(MESH_TAG, "MAC: %s", (char*)rx_data.data+1);
             break;
         case GET_DATA_STREAM_TABLE: //| MSG Code | MAC addresse of the client |
             tx_buf[0] = INFORM_DATA_STREAM_TABLE;
@@ -568,7 +554,6 @@ void inform_ds_table_len(){
         }
     }
 
-    //TODO: send data to a specific node. Is transmission using meshID possible? If not how to solve?
     for (int i = 0; i < route_table_size; i++) {
         err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
         if (err) {
@@ -889,53 +874,7 @@ void app_main() {
              esp_mesh_is_root_fixed() ? "root fixed" : "root not fixed",
              esp_mesh_get_topology(), esp_mesh_get_topology() ? "(chain)":"(tree)", esp_mesh_is_ps_enabled());
 
-    //******BLE*******
-    #ifdef USE_BLE
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
-
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    ret = esp_bt_controller_init(&bt_cfg);
-    if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s initialize controller failed: %s\n", __func__, esp_err_to_name(ret));
-        return;
-    }
-
-    ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-    if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s enable controller failed: %s\n", __func__, esp_err_to_name(ret));
-        return;
-    }
-    ret = esp_bluedroid_init();
-    if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s init bluetooth failed: %s\n", __func__, esp_err_to_name(ret));
-        return;
-    }
-    ret = esp_bluedroid_enable();
-    if (ret) {
-        ESP_LOGE(GATTS_TAG, "%s enable bluetooth failed: %s\n", __func__, esp_err_to_name(ret));
-        return;
-    }
-
-    ret = esp_ble_gatts_register_callback(gatts_event_handler);
-    if (ret){
-        ESP_LOGE(GATTS_TAG, "gatts register error, error code = %x", ret);
-        return;
-    }
-    ret = esp_ble_gap_register_callback(gap_event_handler);
-    if (ret){
-        ESP_LOGE(GATTS_TAG, "gap register error, error code = %x", ret);
-        return;
-    }
-    ret = esp_ble_gatts_app_register(PROFILE_A_APP_ID);
-    if (ret){
-        ESP_LOGE(GATTS_TAG, "gatts app register error, error code = %x", ret);
-        return;
-    }
-    esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(BLE_LOCAL_MTU);
-    if (local_mtu_ret){
-        ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
-    }
-    #endif
+    
 
     #ifdef USE_WASM
         ESP_LOGI(TAG, "Loading wasm");
