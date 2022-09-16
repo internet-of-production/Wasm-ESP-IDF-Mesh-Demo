@@ -15,7 +15,7 @@ Make the following change in `main.c` for each node type implementation.
 - To deploy multiple processor/monitor nodes, set unique MAC addresses for `uint8_t new_mac[6]`
 
 ### Upload
-Make sure that your board is connected and PIO destinates the corresponding port. After build and upload the code to the MCU, a sample WASM file `main.wasm` also has to be uploded. You find this operation button under `Project task -> <board name> -> platform -> upload file system image` in the PIO menu.
+Make sure that your board is connected and PIO destinates the corresponding port. After build and upload the program to the MCU, a sample WASM file `main.wasm` also has to be uploded. You find this operation button under `Project task -> <board name> -> platform -> upload file system image` in the PIO menu.
 
 ## Web IDE
 A prototype of web IDE is available here: https://wasm-ide.herokuapp.com/ide.html
