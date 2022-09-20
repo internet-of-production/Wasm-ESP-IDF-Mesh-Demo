@@ -18,4 +18,5 @@ Make the following change in `main.c` for each node type implementation.
 Make sure that your board is connected and PIO destinates the corresponding port. After build and upload the program to the MCU, a sample WASM file `main.wasm` also has to be uploded. You find this operation button under `Project task -> <board name> -> platform -> upload file system image` in the PIO menu.
 
 ## Web IDE
-A prototype of web IDE is available here: https://wasm-ide.herokuapp.com/ide.html
+- A prototype of web IDE is available here: https://wasm-ide.herokuapp.com/ide.html
+- Source code and instruction for UI: https://github.com/Ayato77/Wasm-ble-web-ide
