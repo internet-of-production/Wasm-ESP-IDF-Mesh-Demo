@@ -36,6 +36,7 @@
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
 #define MESH_NODE_NAME "data_processor"
 #define MESH_DATA_STREAM_TABLE_LEN 2 // there is two receiver
+#define SAMPLE_MACHINE_DATA 1
 
 //Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
@@ -920,12 +921,15 @@ void esp_mesh_p2p_tx_main(void *arg)
                      esp_mesh_get_routing_table_size(), send_count);
         }
 
-        char* message = "Hello, here is data monitor";
+        /*char* message = "Hello, here is data monitor";
         int len = strlen(message);
         tx_buf[0] = INFORM_NODE_TXT_MSG;
         for(int j=0; j<len; j++){
             tx_buf[j+1] = (uint8_t)message[j];
-        }
+        }*/
+
+        tx_buf[0] = MACHINE_DATA_INT;
+        tx_buf[1] = SAMPLE_MACHINE_DATA;
 
         for (int i = 0; i < num_of_destination; i++) {
             err = esp_mesh_send(&data_stream_table[i], &data, MESH_DATA_P2P, NULL, 0);

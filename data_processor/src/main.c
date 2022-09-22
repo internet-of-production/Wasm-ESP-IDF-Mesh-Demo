@@ -57,14 +57,13 @@ static const char *MESH_TAG = "mesh_main";
 static const char *TAG = "wasm";
 
 #define USE_DEFAULT_WASM
-#define DEFAULT_WASM_PARAM_NUM 2
+#define DEFAULT_WASM_PARAM_NUM 1
 
 #define NO_WASM_MODULE 0
 #define WASM_ON 1
 #define WASM_OFF 2
 
 #define WASM_STACK_SLOTS    4000
-#define CALC_INPUT  2
 #define FATAL(func, msg) { ESP_LOGE(TAG, "Fatal: " func " "); ESP_LOGE(TAG, "%s", msg);}
 #define BASE_PATH "/spiffs"
 
@@ -193,13 +192,13 @@ static void wasm_init()
  * Call WASM task
  */
 
-  void wasm_task(){
+  void wasm_task(uint8_t input_data){
     const void *i_argptrs[num_wasm_parameters];
     char inputBytes[num_wasm_parameters];
     M3Result result = m3Err_none;
 
     for(int j=0; j<num_wasm_parameters; j++){
-        inputBytes[j]=0x01;
+        inputBytes[j]=input_data;
     }
     
     for(int i=0; i<num_wasm_parameters ;i++){
@@ -447,9 +446,6 @@ void esp_mesh_p2p_rx_main(void *arg)
                     store_wasm_num_param(new_num_wasm_param);
                     set_wasm_on();
                     wasm_init();
-                    wasm_task();
-                    ESP_LOGI(TAG, "Wasm result:");
-                    ESP_LOGI(TAG,"%d", wasmResult);
                 }
 
             break;
@@ -527,6 +523,7 @@ void esp_mesh_p2p_rx_main(void *arg)
                     data_stream_table[num_of_destination].addr[i] = rx_data.data[i+1];
                 }
                 num_of_destination++;
+                ESP_LOGI(MESH_TAG, "New destination added");
             }
             break;
         case REMOVE_DATA_DEST: //|MSG_CODE|DEST_MAC|
@@ -553,6 +550,24 @@ void esp_mesh_p2p_rx_main(void *arg)
                     }
                 }
                 num_of_destination--;
+                ESP_LOGI(MESH_TAG, "One destination removed");
+            }
+            break;
+        case MACHINE_DATA_INT: //|MSG_CODE|DATA|
+            ESP_LOGI(MESH_TAG, "Received data (MACHINE_DATA_INT): %d", rx_data.data[1]);
+            tx_buf[0] = MACHINE_DATA_INT;
+            wasm_task(rx_data.data[1]); //Just increment for demo
+            ESP_LOGI(MESH_TAG, "Wasm result (MACHINE_DATA_INT): %d", wasmResult);
+            tx_buf[1] = wasmResult;
+            for (int i = 0; i < num_of_destination; i++) {
+                err = esp_mesh_send(&data_stream_table[i], &tx_data, MESH_DATA_P2P, NULL, 0);
+                if (err) {
+                    ESP_LOGE(MESH_TAG,
+                            "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                            send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                            MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                            err, tx_data.proto, tx_data.tos);
+                }
             }
             break;
         default:
@@ -941,8 +956,5 @@ void app_main() {
     if(wasm_module_stat==WASM_ON){
         ESP_LOGI(TAG, "Loading wasm");
         wasm_init(NULL);
-        wasm_task();
-        ESP_LOGI(TAG, "Wasm result:");
-        ESP_LOGI(TAG,"%d", wasmResult);
     }
 }

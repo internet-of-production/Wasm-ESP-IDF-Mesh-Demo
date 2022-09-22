@@ -599,6 +599,9 @@ void esp_mesh_p2p_rx_main(void *arg)
                 num_of_destination--;
             }
             break;
+        case MACHINE_DATA_INT: //|MSG_CODE|DATA|
+            ESP_LOGI(MESH_TAG, "Received machine data: %d", rx_data.data[1]);
+            break;
         default:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data);
             break;
