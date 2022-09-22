@@ -306,7 +306,7 @@ void esp_mesh_p2p_tx_main(void *arg)
             tx_buf[j] = (uint8_t)message[j];
         }
         
-        for (i = 0; i < route_table_size; i++) {
+        /*for (i = 0; i < route_table_size; i++) {
             err = esp_mesh_send(&route_table[i], &data, MESH_DATA_P2P, NULL, 0);
             if (err) {
                 ESP_LOGE(MESH_TAG,
@@ -315,6 +315,17 @@ void esp_mesh_p2p_tx_main(void *arg)
                          MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
                          err, data.proto, data.tos);
             } 
+        }*/
+
+        for (int i = 0; i < num_of_destination; i++) {
+            err = esp_mesh_send(&data_stream_table[i], &data, MESH_DATA_P2P, NULL, 0);
+            if (err) {
+                ESP_LOGE(MESH_TAG,
+                         "[ROOT-2-UNICAST:%d][L:%d]parent:"MACSTR" to "MACSTR", heap:%d[err:0x%x, proto:%d, tos:%d]",
+                         send_count, mesh_layer, MAC2STR(mesh_parent_addr.addr),
+                         MAC2STR(route_table[i].addr), esp_get_minimum_free_heap_size(),
+                         err, data.proto, data.tos);
+            }
         }
 
 
@@ -360,6 +371,7 @@ void esp_mesh_p2p_rx_main(void *arg)
         {
         case INFORM_NODE_TXT_MSG:
             ESP_LOGI(MESH_TAG, "Received message: %s", (char*)rx_data.data+1);
+            //TODO: Data transmission
             break;
         case GET_ROUTING_TABLE:
             //esp_mesh_get_routing_table returns only descendant nodes, no ancestors!!
