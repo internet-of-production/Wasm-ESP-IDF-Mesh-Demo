@@ -25,9 +25,8 @@ A data stream processing with WebAssembly over mesh network for ESP MCUs. ESPs b
 Check your ESP board and edit `platformio.ini`
 
 ### Configuration
-Make the following change in `main.c` for each node type implementation.
-- Set your router's SSID and password
-- To deploy multiple processor/monitor nodes, set unique MAC addresses for `uint8_t new_mac[6]`
+- In `main.c` for only root node, set your router's SSID and password
+- The default max. number of data stream distination is TWO. To change this, set new MESH_DATA_STREAM_TABLE_LEN (number of destinations * 6) for target nodes
 
 ### Upload
 Make sure that your board is connected and PIO destinates the corresponding port. After build and upload the program to the MCU, a sample WASM file `main.wasm` also has to be uploded. You find this operation button under `Project task -> <board name> -> platform -> upload file system image` in the PIO menu.
