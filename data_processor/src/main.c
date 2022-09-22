@@ -26,8 +26,6 @@
 #define CONFIG_MESH_AP_CONNECTIONS 5 //MAX 10
 #define CONFIG_MESH_CHANNEL 0 /* channel (must match the router's channel) */
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
-#define CONFIG_MESH_ROUTER_SSID "FRITZ!Box 7560 YQ"
-#define CONFIG_MESH_ROUTER_PASSWD "19604581320192568195"
 #define MESH_NODE_NAME "data_processor"
 #define MESH_DATA_STREAM_TABLE_LEN 2*6 // there is two receiver
 
@@ -791,10 +789,10 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 void app_main() {
-    ESP_LOGI(TAG, "set MAC address");
-    esp_base_mac_addr_set(new_mac);
+    //ESP_LOGI(TAG, "set MAC address");
+    //esp_base_mac_addr_set(new_mac);
 
-    set_default_destination();
+    //set_default_destination();
 
     //Initialize spiffs
     ESP_LOGI(TAG, "Initializing SPIFFS");
@@ -851,12 +849,6 @@ void app_main() {
     memcpy((uint8_t *) &cfg.mesh_id, MESH_ID, 6);
     // channel (must match the router's channel)
     cfg.channel = CONFIG_MESH_CHANNEL;
-    // router 
-    
-    cfg.router.ssid_len = strlen(CONFIG_MESH_ROUTER_SSID);
-    memcpy((uint8_t *) &cfg.router.ssid, CONFIG_MESH_ROUTER_SSID, cfg.router.ssid_len);
-    memcpy((uint8_t *) &cfg.router.password, CONFIG_MESH_ROUTER_PASSWD,
-    strlen(CONFIG_MESH_ROUTER_PASSWD));
 
 
     // Is root node fix?
