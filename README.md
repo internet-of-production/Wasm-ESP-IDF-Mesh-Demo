@@ -3,8 +3,11 @@ A data stream processing with WebAssembly over mesh network for ESP MCUs. ESPs b
 - **Root node**: This node is connected with a router and has a role of bridge between its mesh network and external networks. Also, WASM module can be executed on this node.
 - **Processor node**: Nodes that get, process, and forward data. A WASM module processes data.
 - **Monitor node**: This node is an access point for monitoring mesh network. By using the [Web IDE](https://wasm-ide.herokuapp.com/ide.html), one can connect the browser with this node and monitor the network via BLE. Due to the memory limitation, simultaneous execution of MESH, BLE, and WASM causes a crash. Therefore, this node does NOT have the WASM runtime.
+
+Note: This implementation assumes that the root node will be loaded by managing messages from mesh members a lot. Therefore, the root and the monitor node are sepaleted. If the root takes the role of monitor node (BLE functionarity), make sure that Wasm task is disabled.
+
 ## Network Overview
-This example provides a simple data stream processing. A **monitor node** sends a number (default 1) to target nodes. If a **processor node** receives data, add 1 to the input number using WASM module and forward it.        
+This example provides a simple data stream processing. A **monitor node** sends a number (default 1) to target nodes. If a **processor node** receives data, add 1 to the input number using WASM module and forward it. 
 ```mermaid
   graph LR;
       id1{Router} -- WiFi --- Root;
