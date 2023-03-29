@@ -36,7 +36,7 @@ static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
 //Broadcast group
 static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 //base MAC address must be unicast MAC (least significant bit of first byte must be zero)
-//uint8_t new_mac[6] = {0x00,0x00,0x00,0x00,0xFF,0x00};
+uint8_t custom_mac_address[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 
 static bool is_mesh_connected = false;
 static bool is_running = true;
@@ -879,6 +879,23 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+static void get_mac_address()
+{
+    uint8_t mac[6];
+    esp_wifi_get_mac(ESP_IF_WIFI_STA, mac);
+    ESP_LOGI("MAC address", "MAC address: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static void set_mac_address(uint8_t *mac)
+{
+    esp_err_t err = esp_wifi_set_mac(ESP_IF_WIFI_STA, mac);
+    if (err == ESP_OK) {
+        ESP_LOGI("MAC address", "MAC address successfully set to %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        ESP_LOGE("MAC address", "Failed to set MAC address");
+    }
+}
+
 void app_main() {
 
     //Initialize spiffs
@@ -923,6 +940,9 @@ void app_main() {
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &ip_event_handler, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    //get_mac_address();
+    //set_mac_address(custom_mac_address);
 
 
     /*  mesh initialization */
