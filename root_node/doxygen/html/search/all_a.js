@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['tx_5fsize_0',['TX_SIZE',['../main_8c.html#a6a1eef3a18bfaa9a6c515692ffd9321e',1,'main.c']]]
+  ['use_5fdefault_5fwasm_0',['USE_DEFAULT_WASM',['../main_8c.html#a4e8a35f14a73bb0a9d50b143012b90ce',1,'main.c']]]
 ];
