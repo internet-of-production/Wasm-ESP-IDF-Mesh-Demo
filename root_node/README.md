@@ -6,7 +6,8 @@ Mesh network based on the Arduino frame work provides a simple implementation. H
 - esp_mesh_set_type(MESH_ROOT);
 - router configuration
 ### Intermediate node
-- No setting for the type necessary
+- Adjust the root node's MAC adress
+- No setting for the esp_mesh_set_type necessary
 - No router setting necessary 
 ### Note
 - Root node must connect to a router: Without router configuration, it can not send messgages due to implementation of the library
