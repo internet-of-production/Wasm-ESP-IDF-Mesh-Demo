@@ -15,6 +15,12 @@
 #define INFORM_NODE_TXT_MSG 0xE1 
 #define INFORM_CPU_LOAD 0xE2
 #define INFORM_ROUTING_TABLE 0xE3 //| MSG Code | table length | MAC address | name length | name string | has wasm (yes=0x01, no=0x00)|
+/**
+ * @file mesh_msg_codes.h
+ * @brief identification of messages
+ * @author O. Nakakaze
+ */
+
 #define INFORM_DATA_STREAM_TABLE 0xE4 //| MSG Code | total number of nodes | table length | MAC addresses |
 #define INFORM_TOTAL_NUMBER_OF_NODES 0xE5 // | MSG Code | total number of nodes | Root node informs all other nodes
 

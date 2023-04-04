@@ -1,5 +1,11 @@
 //ESP-WIFI-MESH-DOCUMENTATION https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp-wifi-mesh.html
 
+/**
+ * @file main.c
+ * @brief main program of the processor node.
+ * @author O. Nakakaze
+ */
+
 // Include FreeRTOS for delay
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -19,21 +25,26 @@
 #include "m3_env.h"
 #include "wasm3_defs.h"
 
-
-#define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
-#define TX_SIZE          (1460) //MTU of outgoing packets. 
-#define CONFIG_MESH_ROUTE_TABLE_SIZE 10 //There is a limit??
-#define CONFIG_MESH_AP_CONNECTIONS 5 //MAX 10
-#define CONFIG_MESH_CHANNEL 0 /* channel (must match the router's channel) */
+//! MTU of incoming packets. MESH_MTU is 1500 bytes
+#define RX_SIZE          (1500)
+//! MTU of outgoing packets.  
+#define TX_SIZE          (1460)
+#define CONFIG_MESH_ROUTE_TABLE_SIZE 10
+//! the number of max connections. MAX 10 connections allowed
+#define CONFIG_MESH_AP_CONNECTIONS 5 
+//! channel (must match the router's channel) 
+#define CONFIG_MESH_CHANNEL 0
+//! Password ofMesh Access Point
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
 #define MESH_NODE_NAME "data_processor"
-#define MESH_DATA_STREAM_TABLE_LEN 2*6 // there is two receiver
+//! Set length of total MAC adress as #receivers * MAC(6 bits)
+#define MESH_DATA_STREAM_TABLE_LEN 2*6
 
-//Node with the same MESH_ID can communicates each other.
+//! Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
-//Broadcast group
+//! Broadcast group
 static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
-//base MAC address must be unicast MAC (least significant bit of first byte must be zero)
+//! base MAC address must be unicast MAC (least significant bit of first byte must be zero)
 uint8_t new_mac[6] = {0x00,0x00,0x00,0x00,0xFF,0x01};
 
 static bool is_mesh_connected = false;
@@ -41,26 +52,35 @@ static bool is_running = true;
 static mesh_addr_t mesh_parent_addr;
 static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
-static uint8_t tx_buf[TX_SIZE] = { 0, }; //Buffer for outgoing
-static uint8_t rx_buf[RX_SIZE] = { 0, }; //Buffer for incoming
+//! Buffer for outgoing
+static uint8_t tx_buf[TX_SIZE] = { 0, };
+//! Buffer for incoming
+static uint8_t rx_buf[RX_SIZE] = { 0, };
 static mesh_addr_t data_stream_table[MESH_DATA_STREAM_TABLE_LEN]; //TODO: every node must have a routing table of data.
 uint8_t num_of_destination = 0;
 uint8_t current_total_nodes = 0;
 uint8_t snapshot_total_nodes = 0;
 uint32_t data_stream_table_trans_id;
 uint8_t current_root_mac[6];
-uint8_t default_dest_mac[6] = {0xEC,0x94,0xCB,0x6F,0xBD,0xB0};//root
+//! Set root node's MAC address
+uint8_t default_dest_mac[6] = {0xEC,0x94,0xCB,0x6F,0xBD,0xB0};
 mesh_addr_t wasm_target;
 
-
+//! tag to log information about mesh
 static const char *MESH_TAG = "mesh_main";
+//! tag to log information about wasm
 static const char *TAG = "wasm";
 
+//! This macro should be defined if you want to run the default Wasm module.
 #define USE_DEFAULT_WASM
+//! #parameters of the default Wasm module.
 #define DEFAULT_WASM_PARAM_NUM 1
 
+//! Means that this node cannot run Wasm
 #define NO_WASM_MODULE 0
+//! Wasm task enabled
 #define WASM_ON 1
+//! Wasm task disabled
 #define WASM_OFF 2
 
 #define WASM_STACK_SLOTS    4000
@@ -76,6 +96,15 @@ int num_wasm_parameters = 0;
 int new_num_wasm_param = 0;
 int wasm_module_stat = 1; //0: no wasm module, 1: wasm on, 2: wasm off
 
+/************************************************************************
+ * WebAssembly
+ ************************************************************************/
+
+/**
+ * @brief
+ * Set the status of the wasm task to OFF; If wasm task will be stopped/deleted by Web application,
+ * this function should be called to keep status in the flash. (ESP keeps this status also after reset)
+ */
 void set_wasm_off(){
     wasm_module_stat = WASM_OFF;
     nvs_handle_t my_handle;
@@ -93,9 +122,15 @@ void set_wasm_off(){
         else{
             printf("Done\n");
         }
+
     }
 }
 
+/**
+ * @brief
+ * Set the status of the wasm task to ON; If wasm task is available or adeed by Web application,
+ * this function should be called to keep status in the flash. (ESP keeps this status also after reset) 
+ */
 void set_wasm_on(){
     wasm_module_stat = WASM_ON;
     nvs_handle_t my_handle;
@@ -113,12 +148,13 @@ void set_wasm_on(){
         else{
             printf("Done\n");
         }
+
     }
 }
 
 /**
  * @fn 
- * WASM setup using wasm3
+ * WASM setup and instantiation using wasm3
  */
 static void wasm_init()
 {
@@ -263,6 +299,12 @@ int wasm_current_transmit_offset = 0;
 /******************
  * WIFI MESH
  ******************/
+
+/**
+ * @brief 
+ * Main task for transmission over mesh. 
+ * @param[out] void *arg, generic pointer
+ */
 void esp_mesh_p2p_tx_main(void *arg)
 {
     esp_err_t err;
@@ -311,6 +353,13 @@ void esp_mesh_p2p_tx_main(void *arg)
     vTaskDelete(NULL);
 }
 
+
+/**
+ * @brief 
+ * Main Function for reception over mesh. Behavior after receiving message from other nodes is defined in this funtion.
+ * You find message identification numbers in mesh_msg_codes.h  
+ * @param[out] void *arg, generic pointer
+ */
 void esp_mesh_p2p_rx_main(void *arg)
 {
     esp_err_t err;
@@ -579,6 +628,13 @@ void esp_mesh_p2p_rx_main(void *arg)
     vTaskDelete(NULL);
 }
 
+
+/**
+ * @brief 
+ * Main Mesh Function. This function creates main task for transmission and reception.
+ * @param[in] void
+ * @return esp error status (defined in esp_err.h)
+ */
 esp_err_t esp_mesh_comm_p2p_start(void)
 {
     static bool is_comm_p2p_started = false;
@@ -592,6 +648,10 @@ esp_err_t esp_mesh_comm_p2p_start(void)
     return ESP_OK;
 }
 
+/**
+ * @brief
+ * ip event handler. This function should be set into the event handler register.
+ */
 void ip_event_handler(void *arg, esp_event_base_t event_base,
                       int32_t event_id, void *event_data)
 {
@@ -600,6 +660,11 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
 
 }
 
+/**
+ * @brief
+ * Mesh event handler. Action by starting/stopping networking, connecting to children/parent nodes, change of routing tables, etc. 
+ * This function should be set into the event handler register.
+ */
 void mesh_event_handler(void *arg, esp_event_base_t event_base,
                         int32_t event_id, void *event_data)
 {
@@ -803,6 +868,11 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+
+/**
+ * @brief
+ * Main function. 
+ */
 void app_main() {
     //ESP_LOGI(TAG, "set MAC address");
     //esp_base_mac_addr_set(new_mac);
