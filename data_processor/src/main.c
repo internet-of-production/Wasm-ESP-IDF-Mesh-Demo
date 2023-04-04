@@ -224,7 +224,7 @@ static void wasm_init()
 }
 
   /**
- * @fn 
+ * @brief 
  * Call WASM task
  */
 
@@ -262,6 +262,11 @@ static void wasm_init()
 
   }
 
+/**
+ * @brief
+ * Store number of parameters in non-volatile storage (nvs).
+ * @param[in] number of parameters (int)
+ */
 void store_wasm_num_param(int num){
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
