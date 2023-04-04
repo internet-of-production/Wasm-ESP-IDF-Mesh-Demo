@@ -1,3 +1,9 @@
+/**
+ * @file ble-wasm.h
+ * @brief Bluetooth Configuration. Services' UUID, MTU, etc.
+ * @author O. Nakakaze
+ */
+
 #include "esp_bt.h"
 
 #include "esp_gap_ble_api.h"
