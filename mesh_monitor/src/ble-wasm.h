@@ -1,3 +1,9 @@
+/**
+ * @file ble-wasm.h
+ * @brief Bluetooth Configuration. Services' UUID, MTU, etc.
+ * @author O. Nakakaze
+ */
+
 #define GATTS_TAG "BLE-Module"
 
 #define GATTS_SERVICE_UUID_WASM   0x00FF

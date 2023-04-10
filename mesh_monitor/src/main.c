@@ -1,5 +1,11 @@
 //ESP-WIFI-MESH-DOCUMENTATION https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp-wifi-mesh.html
+//BLE-server tutorial https://github.com/espressif/esp-idf/blob/master/examples/bluetooth/bluedroid/ble/gatt_server/tutorial/Gatt_Server_Example_Walkthrough.md
 
+/**
+ * @file main.c
+ * @brief main program of the monitor node.
+ * @author O. Nakakaze
+ */
 // Include FreeRTOS for delay
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -27,23 +33,29 @@
 #include "m3_env.h"
 #include "wasm3_defs.h"*/
 
-
-#define RX_SIZE          (1500) //MTU of incoming packets. MESH_MTU is 1500 bytes
-#define TX_SIZE          (1460) //MTU of outgoing packets. 
+//! MTU of incoming packets. MESH_MTU is 1500 bytes
+#define RX_SIZE          (1500)
+//! MTU of outgoing packets. 
+#define TX_SIZE          (1460)
 #define CONFIG_MESH_ROUTE_TABLE_SIZE 10 //There is a limit??
-#define CONFIG_MESH_AP_CONNECTIONS 5 //MAX 10
-#define CONFIG_MESH_CHANNEL 0 /* channel (must match the router's channel) */
+//! the number of max connections. MAX 10 connections allowed
+#define CONFIG_MESH_AP_CONNECTIONS 5
+//! channel (must match the router's channel) 
+#define CONFIG_MESH_CHANNEL 0
+//! Password ofMesh Access Point
 #define CONFIG_MESH_AP_PASSWD "wasiwasm"
 #define MESH_NODE_NAME "data_processor"
-#define MESH_DATA_STREAM_TABLE_LEN 2 // there is two receiver
+//! #receiver of data
+#define MESH_DATA_STREAM_TABLE_LEN 2
+//! Sample sensor data for experiment.
 #define SAMPLE_MACHINE_DATA 1
 
-//Node with the same MESH_ID can communicates each other.
+//! Node with the same MESH_ID can communicates each other.
 static const uint8_t MESH_ID[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
-//Broadcast group
+//!Broadcast group
 static const mesh_addr_t broadcast_group_id = {.addr = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 
-//base MAC address must be unicast MAC (least significant bit of first byte must be zero)
+//! base MAC address must be unicast MAC (least significant bit of first byte must be zero)
 uint8_t new_mac[6] = {0x00,0x00,0x00,0x00,0xFF,0xFF};
 
 static bool is_mesh_connected = false;
@@ -51,8 +63,10 @@ static bool is_running = true;
 static mesh_addr_t mesh_parent_addr;
 static int mesh_layer = -1;
 static esp_netif_t *netif_sta = NULL;
-static uint8_t tx_buf[TX_SIZE] = { 0, }; //Buffer for outgoing
-static uint8_t rx_buf[RX_SIZE] = { 0, }; //Buffer for incoming
+//! Buffer for outgoing
+static uint8_t tx_buf[TX_SIZE] = { 0, };
+//! Buffer for incoming
+static uint8_t rx_buf[RX_SIZE] = { 0, };
 static mesh_addr_t data_stream_table[MESH_DATA_STREAM_TABLE_LEN]; //TODO: every node must have a routing table of data.
 uint8_t num_of_destination = 0;
 uint8_t current_total_nodes = 0;
@@ -61,8 +75,11 @@ uint32_t data_stream_table_trans_id;
 uint8_t current_root_mac[6];
 uint8_t default_dest_mac[6] = {0xEC,0x94,0xCB,0x6F,0xBD,0xB0};//root
 
-uint8_t ble_array[BLE_ROUTE_TABLE_MTU]; //For table size, name size, and wasmflag. 
-uint8_t ds_ble_array[BLE_LOCAL_MTU]; //For data stream diagram
+//! Array of table size, node's name length, and wasmflag. 
+uint8_t ble_array[BLE_ROUTE_TABLE_MTU];
+//! Array for data stream diagram
+uint8_t ds_ble_array[BLE_LOCAL_MTU];
+//! This offset indicates position of fragmented packet of data stream.
 uint8_t ds_ble_array_offset = 1;
 uint8_t num_received_ds_table = 0;
 bool this_node_is_Wasm_target = true;
@@ -83,6 +100,9 @@ static const char *TAG = "wasm";
  * Management of data stream table in the mesh network
  ************************************************************************/
 
+/**
+ * @brief Set the default destination of data stream
+ */
 void set_default_destination(){
     num_of_destination = 1;
     for(int j=0; j<6;j++){
@@ -98,19 +118,26 @@ void set_default_destination(){
 static void gatts_profile_wasm_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
+//! example dummy data for initialization of the characteristic. Used by gatts_demo_char1_val
 static uint8_t char1_str[] = {0x11,0x22,0x33};
-static esp_gatt_char_prop_t wasm_property = 0;
+static esp_gatt_char_prop_t wasm_property = 0; 
 static esp_gatt_char_prop_t mesh_graph_property = 0;
 int wasm_packet_number = 0;
 int wasm_current_transmit_offset = 0;
 
+//! initial value of the characteristic. This struct will be set at event "ESP_GATTS_CREATE_EVT" (as a parameter for esp_ble_gatts_add_char)
+//TODO: Remove this struct from ESP_GATTS_CREATE_EVT since this initialization is unneccesary.
 static esp_attr_value_t gatts_demo_char1_val =
 {
+    //! attribute max value length
     .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
+    //! attribute current value length
     .attr_len     = sizeof(char1_str),
+    //! poiner to attribute value
     .attr_value   = char1_str,
 };
 
+//! variable for checking if advertisement configurataion is done
 static uint8_t adv_config_done = 0;
 #define adv_config_flag      (1 << 0)
 #define scan_rsp_config_flag (1 << 1)
@@ -126,6 +153,7 @@ static uint8_t raw_scan_rsp_data[] = {
 };
 #else
 
+//! uuid for advertisement service
 static uint8_t adv_service_uuid128[32] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     //first uuid, 16bit, [12],[13] is the value
@@ -134,9 +162,7 @@ static uint8_t adv_service_uuid128[32] = {
     0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
 };
 
-// The length of adv data must be less than 31 bytes
-//static uint8_t test_manufacturer[TEST_MANUFACTURER_DATA_LEN] =  {0x12, 0x23, 0x45, 0x56};
-//adv data
+//! parameters for advertising data used by GAP configuration. 
 static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
     .include_name = true,
@@ -152,7 +178,8 @@ static esp_ble_adv_data_t adv_data = {
     .p_service_uuid = adv_service_uuid128,
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
-// scan response data
+
+//! parameters for scan response data used by GAP configuration. 
 static esp_ble_adv_data_t scan_rsp_data = {
     .set_scan_rsp = true,
     .include_name = true,
@@ -171,19 +198,32 @@ static esp_ble_adv_data_t scan_rsp_data = {
 
 #endif /* CONFIG_SET_RAW_ADV_DATA */
 
+
+//! parameters for BLE advertising. 
 static esp_ble_adv_params_t adv_params = {
+    //! Minimum advertising interval for undirected and low duty cycle directed advertising
     .adv_int_min        = 0x20,
+    //! Maximum advertising interval for undirected and low duty cycle directed advertising
     .adv_int_max        = 0x40,
+    //! advertising type
     .adv_type           = ADV_TYPE_IND,
+    //! Owner bluetooth device address type
     .own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
     //.peer_addr            =
     //.peer_addr_type       =
+    //! advertising channel map
     .channel_map        = ADV_CHNL_ALL,
+    //! advertising filter policy
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
 
+/**
+ * @struct gatt_profile_inst
+ * @brief gatts profiles. 
+ */ 
 struct gatts_profile_inst {
+    //! gatts callback
     esp_gatts_cb_t gatts_cb;
     uint16_t gatts_if;
     uint16_t app_id;
@@ -198,7 +238,10 @@ struct gatts_profile_inst {
     esp_bt_uuid_t descr_uuid;
 };
 
-/* One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT */
+/** 
+ * @struct gatts_profile_inst
+ * @brief One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT
+ */
 static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
     [PROFILE_WASM_APP_ID] = {
         .gatts_cb = gatts_profile_wasm_event_handler,
@@ -210,6 +253,9 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
     }
 };
 
+/**
+ * @brief　a prepare buffer structure to handle long characteristic write
+ */
 typedef struct {
     uint8_t                 *prepare_buf;
     int                     prepare_len;
@@ -221,7 +267,14 @@ static prepare_type_env_t b_prepare_write_env;
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 
-
+/**
+ * @brief The functions gatts_event_handler() and gap_event_handler() handle all the events that are pushed to the application from the BLE stack. 
+ * 
+ * @param event, GAP callback parameters union
+ * @param param, GAP BLE callback event type
+ * @details Once the advertising data have been set, the GAP event ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT is triggered. For the case of raw advertising data set, the event triggered is ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT. 
+ * Additionally when the raw scan response data is set, ESP_GAP_BLE_SCAN_RSP_DATA_RAW_SET_COMPLETE_EVT event is triggered.
+ */
 void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
     switch (event) {
@@ -282,7 +335,13 @@ void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
 }
 
 
-//This function responses for a write requiest if a client requires a response (need_rsp).
+/**
+ * @brief write event function. It responses only if a client requires a response (need_rsp).
+ * 
+ * @param gatts_if 
+ * @param prepare_write_env 
+ * @param param 
+ */
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
     esp_gatt_status_t status = ESP_GATT_OK;
     if (param->write.need_rsp){
@@ -327,6 +386,12 @@ void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare
     }
 }
 
+/**
+ * @brief The client finishes the long write sequence by sending an Executive Write Request. This command triggers an ESP_GATTS_EXEC_WRITE_EVT event. The server handles this event by sending a response and executing the example_exec_write_event_env() function
+ * 
+ * @param prepare_write_env, prepare_type_env_t
+ * @param param, esp_ble_gatts_cb_param_t
+ */
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
     if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC){
         esp_log_buffer_hex(GATTS_TAG, prepare_write_env->prepare_buf, prepare_write_env->prepare_len);
@@ -340,6 +405,17 @@ void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble
     prepare_write_env->prepare_len = 0;
 }
 
+
+/**
+ * @brief The application profiles for Wasm updates are stored in an array and corresponding callback functions here
+ * 
+ * @param event 
+ * @param gatts_if 
+ * @param param 
+ * 
+ * @details First, a client sends an information about a new Wasm binary, such as, total number of packets, MAC address of the target node.
+ * A receiver calls this function to check if the arrived msg is for him and handle the packet. If yes, the next payload will be written into the Wasm binary file.
+ */
 static void gatts_profile_wasm_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
 
     esp_err_t err;
@@ -627,7 +703,17 @@ static void gatts_profile_wasm_event_handler(esp_gatts_cb_event_t event, esp_gat
 }
 
 
-
+/**
+ * @brief The application profiles for mesh network communication
+ * 
+ * @param event 
+ * @param gatts_if 
+ * @param param 
+ * 
+ * @details A monitor node calls this function to handle request related to the data stream network table. 
+ * For example, the web application sends a message with the BLE_ADD_DATA_DEST code after adding a edge between node in the visualized graph of UI.
+ * Then, such message should be hanldled by this function.
+ */
 static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     esp_err_t err;
     mesh_data_t data;
@@ -868,6 +954,13 @@ static void gatts_profile_mesh_graph_event_handler(esp_gatts_cb_event_t event, e
     }
 }
 
+/**
+ * @brief GATTS event handler. The functions gatts_event_handler() and gap_event_handler() handle all the events that are pushed to the application from the BLE stack.
+ * 
+ * @param event 
+ * @param gatts_if 
+ * @param param 
+ */
 void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
     // If event is register event, store the gatts_if for each profile 
@@ -899,6 +992,12 @@ void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp
 /******************
  * WIFI MESH
  ******************/
+
+/**
+ * @brief Main task for transmission over mesh.
+ * 
+ * @param arg 
+ */
 void esp_mesh_p2p_tx_main(void *arg)
 {
     esp_err_t err;
@@ -950,6 +1049,13 @@ void esp_mesh_p2p_tx_main(void *arg)
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief Main Function for reception over mesh. Behavior after receiving message from other nodes is defined in this funtion. 
+ * You find message identification numbers in mesh_msg_codes.h
+
+ * 
+ * @param arg 
+ */
 void esp_mesh_p2p_rx_main(void *arg)
 {
     esp_err_t err;
@@ -1200,6 +1306,11 @@ void esp_mesh_p2p_rx_main(void *arg)
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief Main Mesh Function. This function creates main task for transmission and reception.
+ * 
+ * @return esp_err_t 
+ */
 esp_err_t esp_mesh_comm_p2p_start(void)
 {
     static bool is_comm_p2p_started = false;
@@ -1213,6 +1324,14 @@ esp_err_t esp_mesh_comm_p2p_start(void)
     return ESP_OK;
 }
 
+/**
+ * @brief ip event handler. This function should be set into the event handler register.
+ * 
+ * @param arg 
+ * @param event_base 
+ * @param event_id 
+ * @param event_data 
+ */
 void ip_event_handler(void *arg, esp_event_base_t event_base,
                       int32_t event_id, void *event_data)
 {
@@ -1221,6 +1340,15 @@ void ip_event_handler(void *arg, esp_event_base_t event_base,
 
 }
 
+/**
+ * @brief Mesh event handler. Action by starting/stopping networking, connecting to children/parent nodes, change of routing tables, etc. 
+ * This function should be set into the event handler register.
+ * 
+ * @param arg 
+ * @param event_base 
+ * @param event_id 
+ * @param event_data 
+ */
 void mesh_event_handler(void *arg, esp_event_base_t event_base,
                         int32_t event_id, void *event_data)
 {
@@ -1424,6 +1552,9 @@ void mesh_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+/**
+ * @brief Main application.
+ */
 void app_main() {
     //ESP_LOGI(TAG, "set MAC address");
     //esp_base_mac_addr_set(new_mac);

@@ -1,6 +1,7 @@
 /**
  * @file mesh_msg_codes.h
- * @brief code definition for handling messages
+ * @brief identification of messages
+ * @author O. Nakakaze
  */
 
 //Requests to the root node 0x0--
